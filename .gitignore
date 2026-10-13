@@ -29,3 +29,12 @@ desktop.ini
 .vscode/
 .idea/
 *.swp
+
+# 排查 CI 时临时下载的日志
+job-log.txt
+*-log.txt
+prev-log.txt
+run*-log.txt
+build-log.zip
+build-logs/
+
