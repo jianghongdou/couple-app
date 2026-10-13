@@ -18,6 +18,8 @@ final class ChatService: ObservableObject {
     private var typingResetWork: DispatchWorkItem?
     private var bannerWork: DispatchWorkItem?
     private var started = false
+    private var pollTimer: Timer?
+    private var pollCounter = 0
 
     private init() {
         RealtimeClient.shared.onEvent = { [weak self] event in
@@ -36,12 +38,94 @@ final class ChatService: ObservableObject {
         guard !DeviceConfig.shared.token.isEmpty else { return }
         started = true
         RealtimeClient.shared.start()
+        startPolling()
         Task { await loadHistoryIfNeeded() }
     }
 
     func stop() {
         started = false
+        stopPolling()
         RealtimeClient.shared.stop()
+    }
+
+    // MARK: - 轮询兜底
+    //
+    // WebSocket 是「实时」通道，但服务端可能没有跑常驻进程
+    // （例如用 PHP 部署、只放了一个 PHP 站点）。
+    // 这种情况下每 5 秒拉一次最新消息，聊天依然可用，只是略有延迟。
+
+    private func startPolling() {
+        stopPolling()
+        DispatchQueue.main.async {
+            self.pollTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+                self?.pollTick()
+            }
+        }
+    }
+
+    private func stopPolling() {
+        pollTimer?.invalidate()
+        pollTimer = nil
+    }
+
+    private func pollTick() {
+        Task { await pollOnce() }
+    }
+
+    private func pollOnce() async {
+        guard !DeviceConfig.shared.token.isEmpty, !DeviceConfig.shared.coupleId.isEmpty else { return }
+        // 实时通道正常时完全不需要轮询
+        if RealtimeClient.shared.isConnected { return }
+        pollCounter += 1
+        // 聊天页可见：每 5 秒刷；不可见：每 60 秒刷一次（更新未读角标和顶部横幅）
+        if !chatVisible && pollCounter % 12 != 0 { return }
+        await fetchLatestForPolling()
+    }
+
+    /// 进入聊天页时主动刷新一次最新消息（不依赖 WebSocket，保证总能收到对方新消息）
+    func refreshLatest() async {
+        guard !DeviceConfig.shared.token.isEmpty, !DeviceConfig.shared.coupleId.isEmpty else { return }
+        await fetchLatestForPolling()
+    }
+
+    private func fetchLatestForPolling() async {
+        do {
+            let result = try await APIClient.shared.fetchMessages(before: 0, limit: 30)
+            await MainActor.run {
+                let myId = DeviceConfig.shared.userId
+                var rest: [ChatMessage] = []
+                var freshFromPartner: [ChatMessage] = []
+                let local = LocalStore.shared.messages
+
+                for message in result.messages {
+                    // 自己发的消息：把本地「发送中」那条合并掉，避免出现两条
+                    if !message.clientId.isEmpty,
+                       local.contains(where: { $0.pending && $0.clientId == message.clientId }) {
+                        LocalStore.shared.confirmPendingMessage(clientId: message.clientId, serverMessage: message)
+                    } else {
+                        rest.append(message)
+                    }
+                    if message.senderId != myId && !local.contains(where: { $0.id == message.id }) {
+                        freshFromPartner.append(message)
+                    }
+                }
+
+                LocalStore.shared.upsertMessages(rest)
+                self.hasMoreHistory = result.hasMore
+                self.errorText = ""
+
+                if let latest = freshFromPartner.last {
+                    if self.chatVisible {
+                        self.markRead()
+                    } else {
+                        self.showBanner(latest)
+                        Haptics.tap()
+                    }
+                }
+            }
+        } catch {
+            // 轮询失败静默处理，下一次再试
+        }
     }
 
     // MARK: - 历史

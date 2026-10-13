@@ -61,6 +61,7 @@ struct ChatView: View {
             .onAppear {
                 chat.chatVisible = true
                 chat.markRead()
+                Task { await chat.refreshLatest() }
             }
             .onDisappear {
                 chat.chatVisible = false
@@ -73,9 +74,9 @@ struct ChatView: View {
     private var statusBar: some View {
         HStack(spacing: 6) {
             Circle()
-                .fill(realtime.isConnected ? AppTheme.mint : AppTheme.red)
+                .fill(realtime.isConnected ? AppTheme.mint : (realtime.isDegraded ? AppTheme.orange : AppTheme.red))
                 .frame(width: 6, height: 6)
-            Text(realtime.isConnected ? (realtime.partnerOnline ? "在线" : "已连接") : "连接中…")
+            Text(realtime.isConnected ? (realtime.partnerOnline ? "在线" : "已连接") : (realtime.isDegraded ? "轮询刷新中（5 秒）" : "连接中…"))
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
 

@@ -19,6 +19,8 @@ final class RealtimeClient: ObservableObject {
     @Published var isConnected = false
     @Published var partnerOnline = false
     @Published var lastError = ""
+    /// WebSocket 反复连不上时置为 true：此时客户端改用轮询拉消息（PHP 版服务端可以不跑常驻进程）
+    @Published var isDegraded = false
 
     var onEvent: ((RealtimeEvent) -> Void)?
 
@@ -93,6 +95,7 @@ final class RealtimeClient: ObservableObject {
         if isConnected != value {
             DispatchQueue.main.async {
                 self.isConnected = value
+                if value { self.isDegraded = false }
             }
         }
     }
@@ -143,6 +146,9 @@ final class RealtimeClient: ObservableObject {
         switch type {
         case "hello":
             retryCount = 0
+            DispatchQueue.main.async {
+                self.isDegraded = false
+            }
             event = .hello(coupleId: JSONRead.string(dict, "coupleId"))
         case "message":
             if let messageDict = JSONRead.dict(dict["message"]), let message = ChatMessage(json: messageDict) {
@@ -200,6 +206,12 @@ final class RealtimeClient: ObservableObject {
         retryCount = min(retryCount + 1, 6)
         let delays: [Double] = [1, 2, 4, 8, 15, 20, 30]
         let delay = delays[min(retryCount - 1, delays.count - 1)]
+        // 连续多次连不上：切到「轮询兜底」状态，并放慢重连（避免一直空耗）
+        if retryCount >= 3 && !isDegraded {
+            DispatchQueue.main.async {
+                self.isDegraded = true
+            }
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self = self, self.running else { return }
             self.open()
