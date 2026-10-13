@@ -1,6 +1,8 @@
-# 本地配置（含密钥，绝不入库）
+# 本地配置（含数据库密码与密钥，绝不入库）
+# 注意：必须写成锚定的 /config.php！写成 config.php 时，在 Windows 上
+# core.ignorecase=true 会连 src/Config.php 一起忽略掉。
 /config.php
-# 运行时数据：SQLite 数据库、表情文件、日志
+# 运行时数据：表情文件、日志、WS 状态文件（数据库在 MySQL 里，不在这个目录）
 /data/
 !data/.gitkeep
 /data-*/
@@ -12,6 +14,8 @@
 !test-report.txt
 test-server.log
 test-ws-server.log
+# 安装向导测试用的临时配置目录
+/test/install-config/
 
 # 依赖（本项目不需要 Composer，留着是为了防止误提交）
 vendor/

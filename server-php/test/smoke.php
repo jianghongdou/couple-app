@@ -3,15 +3,19 @@
  * 端到端冒烟测试（php test/smoke.php）
  *
  * 做法：
- *   1. 用 proc_open 启动真实服务：php -S 127.0.0.1:8899 -t public
- *      （环境变量注入随机 JWT_SECRET / ADMIN_PASSWORD / DATA_DIR=./data-test，
+ *   1. 先连 MySQL/MariaDB：DROP + CREATE 测试库（couple_test），保证从零开始
+ *   2. 用 proc_open 启动真实服务：php -S 127.0.0.1:8899 -t public
+ *      （环境变量注入随机 JWT_SECRET / ADMIN_PASSWORD / DATA_DIR=./data-test 与
+ *        DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASS，
  *        并设置 COUPLE_CONFIG_FILE=none 保证不受本机 config.php 影响）
- *   2. 逐条断言 docs/API.md 定义的关键接口（对齐 Node 版 server/test/smoke.mjs）
- *   3. 再启动 bin/ws-server.php（端口 8900），用本文件里手写的极简 WebSocket 客户端
+ *   3. 逐条断言 docs/API.md 定义的关键接口（对齐 Node 版 server/test/smoke.mjs）
+ *   4. 再启动 bin/ws-server.php（端口 8900），用本文件里手写的极简 WebSocket 客户端
  *      断言 hello / message 实时推送 / ping-pong / presence / typing
- *   4. 全部输出同时写入 test-report.txt，失败时附带服务端日志尾部
+ *   5. 全部输出同时写入 test-report.txt；结束时 DROP 测试库、清理临时文件
  *
  * 运行： php test/smoke.php
+ * 数据库连接可用环境变量覆盖（默认下面的值）：
+ *   TEST_DB_HOST / TEST_DB_PORT / TEST_DB_NAME / TEST_DB_USER / TEST_DB_PASS
  */
 
 // ---------------------------------------------------------------------------
@@ -30,6 +34,19 @@ $PUBLIC_PACK_DIR = $ROOT . '/public/emoji/公共表情';
 $REPORT_FILE = $ROOT . '/test-report.txt';
 $REST_LOG = $ROOT . '/test-server.log';
 $WS_LOG = $ROOT . '/test-ws-server.log';
+
+// MySQL / MariaDB（宝塔环境的等价物）。测试库会在每次运行前重建。
+function envOr($key, $default)
+{
+    $v = getenv($key);
+    return ($v === false || $v === '') ? $default : $v;
+}
+$DB_HOST = envOr('TEST_DB_HOST', '127.0.0.1');
+$DB_PORT = (int) envOr('TEST_DB_PORT', '3307');
+$DB_NAME = envOr('TEST_DB_NAME', 'couple_test');
+$DB_USER = envOr('TEST_DB_USER', 'couple');
+$DB_PASS = envOr('TEST_DB_PASS', 'couplepass123');
+$DB_CHARSET = 'utf8mb4';
 
 $GLOBALS['passed'] = 0;
 $GLOBALS['failed'] = 0;
@@ -424,6 +441,44 @@ class WsClient
 }
 
 // ---------------------------------------------------------------------------
+// 数据库准备 / 清理（MySQL / MariaDB）
+// ---------------------------------------------------------------------------
+function testDbConnect($withDb = false)
+{
+    global $DB_HOST, $DB_PORT, $DB_NAME, $DB_USER, $DB_PASS, $DB_CHARSET;
+    $dsn = 'mysql:host=' . $DB_HOST . ';port=' . $DB_PORT . ($withDb ? ';dbname=' . $DB_NAME : '') . ';charset=' . $DB_CHARSET;
+    return new PDO($dsn, $DB_USER, $DB_PASS, [
+        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+    ]);
+}
+
+/** 从零开始：DROP + CREATE 测试库 */
+function recreateTestDatabase()
+{
+    global $DB_NAME;
+    $pdo = testDbConnect(false);
+    $pdo->exec('DROP DATABASE IF EXISTS `' . $DB_NAME . '`');
+    $pdo->exec('CREATE DATABASE `' . $DB_NAME . '` CHARACTER SET utf8mb4');
+    $pdo->exec('USE `' . $DB_NAME . '`');
+    $tables = $pdo->query('SHOW TABLES')->fetchAll(PDO::FETCH_COLUMN);
+    return count($tables) === 0;
+}
+
+/** 删除测试库（测试结束清理） */
+function dropTestDatabase()
+{
+    global $DB_NAME;
+    try {
+        $pdo = testDbConnect(false);
+        $pdo->exec('DROP DATABASE IF EXISTS `' . $DB_NAME . '`');
+        return true;
+    } catch (PDOException $e) {
+        return false;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // 进程管理（stdio 重定向到文件，避免管道在受限环境下不可用）
 // ---------------------------------------------------------------------------
 function childEnv(array $overrides)
@@ -552,11 +607,21 @@ out('  情侣 App 服务端 · PHP 版端到端冒烟测试');
 out('========================================');
 out('PHP ' . PHP_VERSION . ' · ' . PHP_OS . ' · ' . php_uname('m'));
 out('测试端口 ' . $PORT . '（REST） · ' . $WS_PORT . '（WebSocket） · 数据目录 ' . $DATA_DIR);
+out('数据库 ' . $DB_HOST . ':' . $DB_PORT . ' / ' . $DB_NAME . '（' . $DB_USER . '）');
 
 // 从干净状态开始
 removeDir($DATA_DIR_ABS);
 @unlink($REST_LOG);
 @unlink($WS_LOG);
+try {
+    $fresh = recreateTestDatabase();
+    out('测试数据库已重建： ' . $DB_NAME . '（空库：' . ($fresh ? '是' : '否') . '）');
+} catch (PDOException $e) {
+    out('❌ 无法重建测试数据库 ' . $DB_NAME . '：' . $e->getMessage());
+    out('   请确认 MySQL/MariaDB 正在运行，且 ' . $DB_USER . '@' . $DB_HOST . ':' . $DB_PORT . ' 可用。');
+    @file_put_contents($REPORT_FILE, implode("\n", $GLOBALS['report']) . "\n");
+    exit(1);
+}
 
 $envOverrides = [
     'JWT_SECRET' => $JWT_SECRET,
@@ -572,6 +637,12 @@ $envOverrides = [
     'TIMEZONE' => 'Asia/Shanghai',
     'DEEPSEEK_API_KEY' => '',
     'COUPLE_CONFIG_FILE' => 'none',
+    'DB_HOST' => $DB_HOST,
+    'DB_PORT' => (string) $DB_PORT,
+    'DB_NAME' => $DB_NAME,
+    'DB_USER' => $DB_USER,
+    'DB_PASS' => $DB_PASS,
+    'DB_CHARSET' => $DB_CHARSET,
 ];
 $env = childEnv($envOverrides);
 
@@ -598,6 +669,17 @@ out('REST 服务已启动，开始断言…');
 $wsProc = null;
 $wsClients = [];
 $exitCode = 1;
+
+// 异常退出（超时/致命错误）也要尽量清掉测试库，避免留下脏数据
+register_shutdown_function(function () {
+    global $DB_NAME;
+    try {
+        $pdo = testDbConnect(false);
+        $pdo->exec('DROP DATABASE IF EXISTS `' . $DB_NAME . '`');
+    } catch (PDOException $e) {
+        // 数据库已不可用，忽略
+    }
+});
 
 try {
     // =====================================================================
@@ -1482,10 +1564,19 @@ try {
         ok(dot($s1['json'], 'aiDailyLimit') === 123, 'aiDailyLimit 已更新');
         ok(dot($s1['json'], 'deepseekApiKeyConfigured') === true, 'settings 标记 Key 已配置');
 
-        // 数据库里也不应是明文（直接读 sqlite 原始字节）
-        $dbBytes = @file_get_contents($DATA_DIR_ABS . '/couple.sqlite');
-        $walBytes = @file_get_contents($DATA_DIR_ABS . '/couple.sqlite-wal');
-        $allBytes = (string) $dbBytes . (string) $walBytes;
+        // 数据库里也不应是明文（直接查 MySQL 里的原始字节）
+        $dbRows = [];
+        try {
+            $probe = testDbConnect(true);
+            $dbRows = $probe->query('SELECT `key`, `value` FROM settings')->fetchAll();
+            $probe = null;
+        } catch (PDOException $e) {
+            $dbRows = [];
+        }
+        $allBytes = '';
+        foreach ($dbRows as $row) {
+            $allBytes .= (string) $row['key'] . '=' . (string) $row['value'] . "\n";
+        }
         ok($allBytes !== '' && strpos($allBytes, $secretKey) === false,
             '数据库中不存在明文 Key（已加密存储）');
 
@@ -1623,6 +1714,22 @@ try {
         $sys = req('GET', '/admin/api/system', ['token' => $adminToken]);
         ok($sys['status'] === 200 && is_string(dot($sys['json'], 'php')), 'GET /admin/api/system 返回 PHP 版本');
         ok(dot($sys['json'], 'wsRunning') === true, '/admin/api/system 报告 WebSocket 正在运行');
+        // 服务器信息区块：数据库版本 / 连接状态 / 数据目录 / 时区 / JWT 密钥
+        ok(is_string(dot($sys['json'], 'database.version')) && dot($sys['json'], 'database.version') !== '',
+            '/admin/api/system 返回数据库版本', (string) dot($sys['json'], 'database.version'));
+        ok(in_array(dot($sys['json'], 'database.engine'), ['MySQL', 'MariaDB'], true),
+            '数据库类型为 MySQL 或 MariaDB', (string) dot($sys['json'], 'database.engine'));
+        ok(dot($sys['json'], 'database.connected') === true, '数据库连接状态为「正常」');
+        ok(dot($sys['json'], 'database.charset') === 'utf8mb4', '数据库字符集为 utf8mb4',
+            (string) dot($sys['json'], 'database.charset'));
+        ok((int) dot($sys['json'], 'database.port') === $DB_PORT, '/admin/api/system 返回数据库端口',
+            (string) dot($sys['json'], 'database.port'));
+        ok(dot($sys['json'], 'database.name') === $DB_NAME, '/admin/api/system 返回数据库名',
+            (string) dot($sys['json'], 'database.name'));
+        ok(is_int(dot($sys['json'], 'database.schemaVersion')), '系统信息含表结构版本');
+        ok(dot($sys['json'], 'jwtSecretConfigured') === true, '系统信息显示 JWT 密钥已配置');
+        ok(is_string(dot($sys['json'], 'timezone')) && dot($sys['json'], 'timezone') !== '', '系统信息含时区');
+        ok(is_string(dot($sys['json'], 'env.dataDir')) && dot($sys['json'], 'env.dataDir') !== '', '系统信息含数据目录');
 
         // 删除用户
         $victim = req('POST', '/api/auth/register', ['body' => ['username' => 'todelete_' . bin2hex(random_bytes(3)), 'password' => 'pass1234']]);
@@ -1843,7 +1950,7 @@ try {
 // ---------------------------------------------------------------------------
 out('');
 out('----------------------------------------');
-out('清理：关闭 WebSocket 连接、停止服务进程、删除测试数据目录');
+out('清理：关闭 WebSocket 连接、停止服务进程、删除测试数据目录与测试数据库');
 
 foreach ($wsClients as $c) {
     $c->close();
@@ -1852,11 +1959,13 @@ if ($wsProc !== null) {
     stopProcess($wsProc);
 }
 stopProcess($restProc);
+$dropped = dropTestDatabase();
 removeDir($DATA_DIR_ABS);
 // 清掉测试期间写进 public/emoji/ 的临时公共表情包（只删这一个子目录）
 removeDir($PUBLIC_PACK_DIR);
 @unlink($ROOT . '/data-test-png.txt');
 out('数据目录已清理：' . $DATA_DIR);
+out('测试数据库已删除： ' . ($dropped ? $DB_NAME : ($DB_NAME . '（删除失败，请手动清理）')));
 
 $passed = $GLOBALS['passed'];
 $failed = $GLOBALS['failed'];
@@ -1887,6 +1996,22 @@ if ($failed === 0) {
 }
 out('========================================');
 out('');
+
+// 把「网页安装向导测试」的报告也合并进 test-report.txt（如果之前跑过 test/install-test.php）
+$mergedReport = $ROOT . '/test-report.txt';
+if (is_file($mergedReport)) {
+    $prev = (string) @file_get_contents($mergedReport);
+    $marker = '  附：网页安装向导测试';
+    $pos = strpos($prev, $marker);
+    if ($pos !== false) {
+        $cut = strrpos(substr($prev, 0, $pos), '========================================');
+        if ($cut !== false) {
+            $installPart = rtrim(substr($prev, $cut));
+            $GLOBALS['report'][] = '';
+            $GLOBALS['report'][] = $installPart;
+        }
+    }
+}
 
 @file_put_contents($REPORT_FILE, implode("\n", $GLOBALS['report']) . "\n");
 @unlink($REST_LOG);

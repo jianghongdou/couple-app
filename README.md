@@ -10,7 +10,8 @@
 
 ### 第 1 步：部署服务器（二选一，想聊天/双人同步就需要）
 
-**方案 A：PHP 版（推荐，宝塔用户零依赖）** —— 不用装 Node、不用 npm，直接把 `server-php/` 丢进宝塔的 PHP 站点即可。
+**方案 A：PHP 版（推荐，宝塔用户最省事）** —— 不用装 Node、不用 npm，用**宝塔自带的 MySQL**，
+浏览器里跑一次**网页安装向导**填数据库信息就完事（全程不改代码）。
 详见 **[docs/10-PHP服务端部署.md](docs/10-PHP服务端部署.md)**。
 
 **方案 B：Node 版** —— 功能完全一样（同一套接口契约），适合有 Node 环境或想跑 Docker 的情况。
@@ -81,7 +82,7 @@ iphone情侣软件/
 │     ├─ Features/              # 各功能页面
 │     └─ Resources/             # 资源目录（App 图标等）
 ├─ server/                      # Node 服务端（Express + SQLite + ws + 后台管理）
-├─ server-php/                  # PHP 服务端（与 Node 版同一套接口契约，宝塔零依赖）
+├─ server-php/                  # PHP 服务端（同一套接口契约，宝塔 + MySQL，网页安装向导）
 ├─ scripts/build-ipa.sh         # 云端构建脚本
 ├─ tools/make-icon.mjs          # 图标生成脚本（纯 Node）
 ├─ .github/workflows/           # GitHub Actions 云编译流水线
@@ -112,7 +113,7 @@ iphone情侣软件/
 ## 技术说明
 
 - **iOS**：SwiftUI，零第三方依赖，最低 iOS 16.1；本地数据用 JSON 文件 + Keychain + AES-GCM；实时通信 URLSessionWebSocketTask。
-- **服务端**：两套实现，接口契约相同 —— Node 20+（Express 4 / better-sqlite3 / ws）或 PHP 8.1+（纯 PHP + PDO SQLite，无需 Composer）。
+- **服务端**：两套实现，接口契约相同 —— Node 20+（Express 4 / SQLite / ws）或 PHP 8.1+（纯 PHP + PDO MySQL，无需 Composer，带网页安装向导）。
 - **构建**：XcodeGen 生成工程（不再手写 pbxproj），GitHub Actions 在 macOS 上编译未签名 IPA。
 - **隐私**：记账与密码本永远只存在手机上；服务器只保存聊天、火花、宠物、签到、愿望、加班记录。
 

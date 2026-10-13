@@ -4,7 +4,7 @@ namespace App;
 use PDOException;
 
 /**
- * 限流：把计数落在 SQLite 的 rate_limits 表里。
+ * 限流：把计数落在数据库的 rate_limits 表里。
  *
  * 原因：PHP 每个请求是独立进程，Node 版那种「进程内 Map」在 PHP-FPM 下无效。
  * 算法与 Node 版一致 —— 固定窗口 + 权重衰减，近似滑动窗口：
@@ -23,7 +23,7 @@ class RateLimit
         $pdo = Db::pdo();
         $pdo->beginTransaction();
         try {
-            $row = Db::one('SELECT * FROM rate_limits WHERE key = ?', [$key]);
+            $row = Db::one('SELECT * FROM rate_limits WHERE `key` = ?', [$key]);
             $count = 0;
             $prevCount = 0;
             $windowStart = $now;
@@ -43,14 +43,14 @@ class RateLimit
             $count += 1;
 
             Db::run(
-                'INSERT INTO rate_limits (key, window_start, window_ms, count, prev_count, prev_start)
+                'INSERT INTO rate_limits (`key`, window_start, window_ms, count, prev_count, prev_start)
                  VALUES (?, ?, ?, ?, ?, ?)
-                 ON CONFLICT(key) DO UPDATE SET
-                   window_start = excluded.window_start,
-                   window_ms    = excluded.window_ms,
-                   count        = excluded.count,
-                   prev_count   = excluded.prev_count,
-                   prev_start   = excluded.prev_start',
+                 ON DUPLICATE KEY UPDATE
+                   window_start = VALUES(window_start),
+                   window_ms    = VALUES(window_ms),
+                   count        = VALUES(count),
+                   prev_count   = VALUES(prev_count),
+                   prev_start   = VALUES(prev_start)',
                 [$key, $windowStart, $windowMs, $count, $prevCount, $windowStart]
             );
             $pdo->commit();

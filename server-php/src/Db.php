@@ -8,8 +8,17 @@ use PDOException;
 /**
  * 数据库层：唯一接触 SQL 的地方（表结构 / 迁移 / 所有查询封装）。
  *
- * 全部使用 PDO 预处理绑定，严禁把用户输入拼进 SQL。
- * 表结构参照 Node 版 server/src/db.js，另加两张「服务端内部」表：
+ * 数据库为 MySQL / MariaDB（PDO pdo_mysql）。兼容性约定：
+ *   - 只用 MySQL 5.7 / 8.0 与 MariaDB 10.x 都支持的语法
+ *   - ENGINE=InnoDB DEFAULT CHARSET=utf8mb4，不指定 COLLATE（8.0 的 0900 专有排序规则不可用）
+ *   - 不使用 JSON 类型（JSON 文本存 MEDIUMTEXT/LONGTEXT，应用层 json_encode/decode）
+ *   - 不使用 CHECK 约束、窗口函数、CTE、JSON_TABLE
+ *   - 主键/索引列用 VARCHAR（utf8mb4 下 VARCHAR(255) 索引约 1020 字节，远低于 3072 上限）
+ *   - 时间戳一律 BIGINT 存毫秒，避免 DATETIME/TIMESTAMP 的时区坑
+ *   - upsert 统一用 INSERT ... ON DUPLICATE KEY UPDATE（MySQL/MariaDB 通用）
+ *
+ * 全部使用 PDO 预处理绑定，严禁把用户输入拼进 SQL（仅表名/列名/索引名这些代码内常量会拼接）。
+ * 表结构与字段名保持与 Node 版 server/src/db.js 一致，另加两张「服务端内部」表：
  *   rate_limits  登录/接口限流计数（PHP 每个请求是独立进程，内存计数无效）
  *   ws_events    实时推送事件队列（REST 进程写入，bin/ws-server.php 轮询广播）
  */
@@ -18,179 +27,465 @@ class Db
     /** @var PDO|null */
     private static $pdo = null;
 
-    const SCHEMA_SQL = "
--- 用户表
-CREATE TABLE IF NOT EXISTS users (
-  id             TEXT PRIMARY KEY,
-  username       TEXT NOT NULL UNIQUE,
-  password_hash  TEXT NOT NULL,
-  nickname       TEXT NOT NULL DEFAULT '',
-  avatar_emoji   TEXT NOT NULL DEFAULT '',
-  couple_id      TEXT,
-  role           TEXT NOT NULL DEFAULT 'user',
-  disabled       INTEGER NOT NULL DEFAULT 0,
-  created_at     INTEGER NOT NULL,
-  updated_at     INTEGER NOT NULL,
-  last_seen_at   INTEGER
-);
-CREATE INDEX IF NOT EXISTS idx_users_couple ON users(couple_id);
+    /** 建库失败时给用户的统一引导语 */
+    const INSTALL_HINT = '请先在浏览器中打开安装向导（站点地址 + /install.php）完成数据库配置。';
 
--- 情侣空间表
-CREATE TABLE IF NOT EXISTS couples (
-  id                TEXT PRIMARY KEY,
-  invite_code       TEXT NOT NULL UNIQUE,
-  together_date     INTEGER,
-  anniversary_title TEXT NOT NULL DEFAULT '在一起',
-  created_at        INTEGER NOT NULL,
-  updated_at        INTEGER NOT NULL,
-  dissolved_at      INTEGER
-);
-CREATE INDEX IF NOT EXISTS idx_couples_active ON couples(dissolved_at);
+    /**
+     * 表结构定义（DDL 方言 = MySQL/MariaDB）。
+     * 每一项：[建表 SQL, 期望列 => 定义, 期望索引 => 列清单]
+     *
+     * 之所以把「期望列/索引」单独列出来，是为了让迁移能做到幂等：
+     * 用 information_schema 查缺补漏，而不是无脑 ALTER（MySQL 没有 ADD COLUMN IF NOT EXISTS）。
+     */
+    private static function tables()
+    {
+        return [
+            'users' => [
+                "CREATE TABLE IF NOT EXISTS users (
+  id             VARCHAR(64)  NOT NULL,
+  username       VARCHAR(64)  NOT NULL,
+  password_hash  VARCHAR(255) NOT NULL,
+  nickname       TEXT         NOT NULL,
+  avatar_emoji   VARCHAR(64)  NOT NULL DEFAULT '',
+  couple_id      VARCHAR(64)  NULL,
+  role           VARCHAR(32)  NOT NULL DEFAULT 'user',
+  disabled       TINYINT      NOT NULL DEFAULT 0,
+  created_at     BIGINT       NOT NULL,
+  updated_at     BIGINT       NOT NULL,
+  last_seen_at   BIGINT       NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_users_username (username)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+                [
+                    'id' => "VARCHAR(64) NOT NULL",
+                    'username' => "VARCHAR(64) NOT NULL",
+                    'password_hash' => "VARCHAR(255) NOT NULL",
+                    'nickname' => "TEXT NOT NULL",
+                    'avatar_emoji' => "VARCHAR(64) NOT NULL DEFAULT ''",
+                    'couple_id' => "VARCHAR(64) NULL",
+                    'role' => "VARCHAR(32) NOT NULL DEFAULT 'user'",
+                    'disabled' => "TINYINT NOT NULL DEFAULT 0",
+                    'created_at' => "BIGINT NOT NULL",
+                    'updated_at' => "BIGINT NOT NULL",
+                    'last_seen_at' => "BIGINT NULL",
+                ],
+                [
+                    'idx_users_couple' => ['couple_id'],
+                ],
+            ],
 
--- 消息表
-CREATE TABLE IF NOT EXISTS messages (
-  id          TEXT PRIMARY KEY,
-  client_id   TEXT,
-  couple_id   TEXT NOT NULL,
-  sender_id   TEXT NOT NULL,
-  kind        TEXT NOT NULL,
-  body        TEXT NOT NULL DEFAULT '',
-  meta        TEXT,
-  created_at  INTEGER NOT NULL,
-  read_at     INTEGER,
-  deleted_at  INTEGER
-);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_client
-  ON messages(couple_id, client_id) WHERE client_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_messages_couple_time ON messages(couple_id, created_at);
+            'couples' => [
+                "CREATE TABLE IF NOT EXISTS couples (
+  id                VARCHAR(64) NOT NULL,
+  invite_code       VARCHAR(32) NOT NULL,
+  together_date     BIGINT      NULL,
+  anniversary_title VARCHAR(128) NOT NULL DEFAULT '在一起',
+  created_at        BIGINT      NOT NULL,
+  updated_at        BIGINT      NOT NULL,
+  dissolved_at      BIGINT      NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_couples_invite (invite_code)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+                [
+                    'id' => "VARCHAR(64) NOT NULL",
+                    'invite_code' => "VARCHAR(32) NOT NULL",
+                    'together_date' => "BIGINT NULL",
+                    'anniversary_title' => "VARCHAR(128) NOT NULL DEFAULT '在一起'",
+                    'created_at' => "BIGINT NOT NULL",
+                    'updated_at' => "BIGINT NOT NULL",
+                    'dissolved_at' => "BIGINT NULL",
+                ],
+                [
+                    'idx_couples_active' => ['dissolved_at'],
+                ],
+            ],
 
--- 表情包
-CREATE TABLE IF NOT EXISTS emoji_packs (
-  id             TEXT PRIMARY KEY,
-  name           TEXT NOT NULL,
-  owner_id       TEXT NOT NULL,
-  couple_id      TEXT NOT NULL,
-  is_public      INTEGER NOT NULL DEFAULT 0,
-  is_system      INTEGER NOT NULL DEFAULT 0,
-  created_at     INTEGER NOT NULL,
-  updated_at     INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_packs_couple ON emoji_packs(couple_id);
-CREATE INDEX IF NOT EXISTS idx_packs_owner ON emoji_packs(owner_id);
+            'messages' => [
+                "CREATE TABLE IF NOT EXISTS messages (
+  id          VARCHAR(64)  NOT NULL,
+  client_id   VARCHAR(64)  NULL,
+  couple_id   VARCHAR(64)  NOT NULL,
+  sender_id   VARCHAR(64)  NOT NULL,
+  kind        VARCHAR(32)  NOT NULL,
+  body        TEXT         NOT NULL,
+  meta        MEDIUMTEXT   NULL,
+  created_at  BIGINT       NOT NULL,
+  read_at     BIGINT       NULL,
+  deleted_at  BIGINT       NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY idx_messages_client (couple_id, client_id),
+  KEY idx_messages_couple_time (couple_id, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+                [
+                    'id' => "VARCHAR(64) NOT NULL",
+                    'client_id' => "VARCHAR(64) NULL",
+                    'couple_id' => "VARCHAR(64) NOT NULL",
+                    'sender_id' => "VARCHAR(64) NOT NULL",
+                    'kind' => "VARCHAR(32) NOT NULL",
+                    'body' => "TEXT NOT NULL",
+                    'meta' => "MEDIUMTEXT NULL",
+                    'created_at' => "BIGINT NOT NULL",
+                    'read_at' => "BIGINT NULL",
+                    'deleted_at' => "BIGINT NULL",
+                ],
+                [
+                    'idx_messages_client' => ['couple_id', 'client_id'],
+                    'idx_messages_couple_time' => ['couple_id', 'created_at'],
+                ],
+            ],
 
--- 表情条目（图片二进制存磁盘，元数据存这里）
-CREATE TABLE IF NOT EXISTS emoji_items (
-  id          TEXT PRIMARY KEY,
-  pack_id     TEXT NOT NULL,
-  owner_id    TEXT NOT NULL,
-  couple_id   TEXT NOT NULL,
-  mime        TEXT NOT NULL,
-  size        INTEGER NOT NULL,
-  name        TEXT NOT NULL DEFAULT '',
-  created_at  INTEGER NOT NULL,
-  updated_at  INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_items_pack ON emoji_items(pack_id);
+            'emoji_packs' => [
+                "CREATE TABLE IF NOT EXISTS emoji_packs (
+  id          VARCHAR(64)  NOT NULL,
+  name        VARCHAR(128) NOT NULL,
+  owner_id    VARCHAR(64)  NOT NULL,
+  couple_id   VARCHAR(64)  NOT NULL DEFAULT '',
+  is_public   TINYINT      NOT NULL DEFAULT 0,
+  is_system   TINYINT      NOT NULL DEFAULT 0,
+  created_at  BIGINT       NOT NULL,
+  updated_at  BIGINT       NOT NULL,
+  PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+                [
+                    'id' => "VARCHAR(64) NOT NULL",
+                    'name' => "VARCHAR(128) NOT NULL",
+                    'owner_id' => "VARCHAR(64) NOT NULL",
+                    'couple_id' => "VARCHAR(64) NOT NULL DEFAULT ''",
+                    'is_public' => "TINYINT NOT NULL DEFAULT 0",
+                    'is_system' => "TINYINT NOT NULL DEFAULT 0",
+                    'created_at' => "BIGINT NOT NULL",
+                    'updated_at' => "BIGINT NOT NULL",
+                ],
+                [
+                    'idx_packs_couple' => ['couple_id'],
+                    'idx_packs_owner' => ['owner_id'],
+                ],
+            ],
 
--- 通用同步对象（火花/宠物/签到/愿望/加班记录/设置）
-CREATE TABLE IF NOT EXISTS sync_objects (
-  couple_id   TEXT NOT NULL,
-  kind        TEXT NOT NULL,
-  id          TEXT NOT NULL,
-  owner_id    TEXT NOT NULL,
-  updated_by  TEXT NOT NULL,
-  updated_at  INTEGER NOT NULL,
-  deleted     INTEGER NOT NULL DEFAULT 0,
-  payload     TEXT,
-  created_at  INTEGER NOT NULL,
-  PRIMARY KEY (couple_id, kind, id)
-);
-CREATE INDEX IF NOT EXISTS idx_sync_pull ON sync_objects(couple_id, updated_at);
+            'emoji_items' => [
+                "CREATE TABLE IF NOT EXISTS emoji_items (
+  id          VARCHAR(64)  NOT NULL,
+  pack_id     VARCHAR(64)  NOT NULL,
+  owner_id    VARCHAR(64)  NOT NULL,
+  couple_id   VARCHAR(64)  NOT NULL DEFAULT '',
+  mime        VARCHAR(64)  NOT NULL,
+  size        BIGINT       NOT NULL DEFAULT 0,
+  name        VARCHAR(191) NOT NULL DEFAULT '',
+  created_at  BIGINT       NOT NULL,
+  updated_at  BIGINT       NOT NULL,
+  PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+                [
+                    'id' => "VARCHAR(64) NOT NULL",
+                    'pack_id' => "VARCHAR(64) NOT NULL",
+                    'owner_id' => "VARCHAR(64) NOT NULL",
+                    'couple_id' => "VARCHAR(64) NOT NULL DEFAULT ''",
+                    'mime' => "VARCHAR(64) NOT NULL",
+                    'size' => "BIGINT NOT NULL DEFAULT 0",
+                    'name' => "VARCHAR(191) NOT NULL DEFAULT ''",
+                    'created_at' => "BIGINT NOT NULL",
+                    'updated_at' => "BIGINT NOT NULL",
+                ],
+                [
+                    'idx_items_pack' => ['pack_id'],
+                ],
+            ],
 
--- 服务端设置（键值对）
-CREATE TABLE IF NOT EXISTS settings (
-  key         TEXT PRIMARY KEY,
-  value       TEXT,
-  updated_at  INTEGER NOT NULL
-);
+            'sync_objects' => [
+                "CREATE TABLE IF NOT EXISTS sync_objects (
+  couple_id   VARCHAR(64)  NOT NULL,
+  kind        VARCHAR(32)  NOT NULL,
+  id          VARCHAR(64)  NOT NULL,
+  owner_id    VARCHAR(64)  NOT NULL,
+  updated_by  VARCHAR(64)  NOT NULL,
+  updated_at  BIGINT       NOT NULL,
+  deleted     TINYINT      NOT NULL DEFAULT 0,
+  payload     MEDIUMTEXT   NULL,
+  created_at  BIGINT       NOT NULL,
+  PRIMARY KEY (couple_id, kind, id),
+  KEY idx_sync_pull (couple_id, updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+                [
+                    'couple_id' => "VARCHAR(64) NOT NULL",
+                    'kind' => "VARCHAR(32) NOT NULL",
+                    'id' => "VARCHAR(64) NOT NULL",
+                    'owner_id' => "VARCHAR(64) NOT NULL",
+                    'updated_by' => "VARCHAR(64) NOT NULL",
+                    'updated_at' => "BIGINT NOT NULL",
+                    'deleted' => "TINYINT NOT NULL DEFAULT 0",
+                    'payload' => "MEDIUMTEXT NULL",
+                    'created_at' => "BIGINT NOT NULL",
+                ],
+                [
+                    'idx_sync_pull' => ['couple_id', 'updated_at'],
+                ],
+            ],
 
--- AI 调用计数
-CREATE TABLE IF NOT EXISTS ai_usage (
-  id          TEXT PRIMARY KEY,
-  user_id     TEXT,
-  endpoint    TEXT NOT NULL,
-  model       TEXT,
-  ok          INTEGER NOT NULL DEFAULT 1,
-  prompt_len  INTEGER NOT NULL DEFAULT 0,
-  created_at  INTEGER NOT NULL,
-  day         TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_ai_usage_day ON ai_usage(day, user_id);
+            'settings' => [
+                // key 是 MySQL 保留字，必须反引号包裹
+                "CREATE TABLE IF NOT EXISTS settings (
+  `key`       VARCHAR(191) NOT NULL,
+  `value`     LONGTEXT     NULL,
+  updated_at  BIGINT       NOT NULL,
+  PRIMARY KEY (`key`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+                [
+                    'key' => "VARCHAR(191) NOT NULL",
+                    'value' => "LONGTEXT NULL",
+                    'updated_at' => "BIGINT NOT NULL",
+                ],
+                [],
+            ],
 
--- 后台操作日志
-CREATE TABLE IF NOT EXISTS admin_logs (
-  id          TEXT PRIMARY KEY,
-  action      TEXT NOT NULL,
-  detail      TEXT,
-  ip          TEXT,
-  created_at  INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_admin_logs_time ON admin_logs(created_at);
+            'ai_usage' => [
+                "CREATE TABLE IF NOT EXISTS ai_usage (
+  id          VARCHAR(64) NOT NULL,
+  user_id     VARCHAR(64) NULL,
+  endpoint    VARCHAR(64) NOT NULL,
+  model       VARCHAR(64) NULL,
+  ok          TINYINT     NOT NULL DEFAULT 1,
+  prompt_len  BIGINT      NOT NULL DEFAULT 0,
+  created_at  BIGINT      NOT NULL,
+  day         VARCHAR(32) NOT NULL,
+  PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+                [
+                    'id' => "VARCHAR(64) NOT NULL",
+                    'user_id' => "VARCHAR(64) NULL",
+                    'endpoint' => "VARCHAR(64) NOT NULL",
+                    'model' => "VARCHAR(64) NULL",
+                    'ok' => "TINYINT NOT NULL DEFAULT 1",
+                    'prompt_len' => "BIGINT NOT NULL DEFAULT 0",
+                    'created_at' => "BIGINT NOT NULL",
+                    'day' => "VARCHAR(32) NOT NULL",
+                ],
+                [
+                    'idx_ai_usage_day' => ['day', 'user_id'],
+                ],
+            ],
 
--- 登录限流计数（内部表，非 API.md 表清单）
-CREATE TABLE IF NOT EXISTS rate_limits (
-  key           TEXT PRIMARY KEY,
-  window_start  INTEGER NOT NULL,
-  window_ms     INTEGER NOT NULL,
-  count         INTEGER NOT NULL DEFAULT 0,
-  prev_count    INTEGER NOT NULL DEFAULT 0,
-  prev_start    INTEGER NOT NULL DEFAULT 0
-);
+            'admin_logs' => [
+                "CREATE TABLE IF NOT EXISTS admin_logs (
+  id          VARCHAR(64) NOT NULL,
+  action      VARCHAR(64) NOT NULL,
+  detail      TEXT        NULL,
+  ip          VARCHAR(64) NULL,
+  created_at  BIGINT      NOT NULL,
+  PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+                [
+                    'id' => "VARCHAR(64) NOT NULL",
+                    'action' => "VARCHAR(64) NOT NULL",
+                    'detail' => "TEXT NULL",
+                    'ip' => "VARCHAR(64) NULL",
+                    'created_at' => "BIGINT NOT NULL",
+                ],
+                [
+                    'idx_admin_logs_time' => ['created_at'],
+                ],
+            ],
 
--- 实时推送事件队列（内部表：REST 进程写，WS 常驻进程读）
-CREATE TABLE IF NOT EXISTS ws_events (
-  id           INTEGER PRIMARY KEY AUTOINCREMENT,
-  couple_id    TEXT,
-  target_user  TEXT,
-  except_user  TEXT,
-  payload      TEXT NOT NULL,
-  created_at   INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_ws_events_couple ON ws_events(couple_id);
-";
+            'rate_limits' => [
+                "CREATE TABLE IF NOT EXISTS rate_limits (
+  `key`         VARCHAR(191) NOT NULL,
+  window_start  BIGINT       NOT NULL,
+  window_ms     BIGINT       NOT NULL,
+  count         BIGINT       NOT NULL DEFAULT 0,
+  prev_count    BIGINT       NOT NULL DEFAULT 0,
+  prev_start    BIGINT       NOT NULL DEFAULT 0,
+  PRIMARY KEY (`key`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+                [
+                    'key' => "VARCHAR(191) NOT NULL",
+                    'window_start' => "BIGINT NOT NULL",
+                    'window_ms' => "BIGINT NOT NULL",
+                    'count' => "BIGINT NOT NULL DEFAULT 0",
+                    'prev_count' => "BIGINT NOT NULL DEFAULT 0",
+                    'prev_start' => "BIGINT NOT NULL DEFAULT 0",
+                ],
+                [],
+            ],
 
-    /** 初始化数据库连接、建表、迁移、写入默认设置（幂等） */
+            'ws_events' => [
+                "CREATE TABLE IF NOT EXISTS ws_events (
+  id           BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  couple_id    VARCHAR(64) NULL,
+  target_user  VARCHAR(64) NULL,
+  except_user  VARCHAR(64) NULL,
+  payload      MEDIUMTEXT  NOT NULL,
+  created_at   BIGINT      NOT NULL,
+  PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+                [
+                    'id' => "BIGINT UNSIGNED NOT NULL AUTO_INCREMENT",
+                    'couple_id' => "VARCHAR(64) NULL",
+                    'target_user' => "VARCHAR(64) NULL",
+                    'except_user' => "VARCHAR(64) NULL",
+                    'payload' => "MEDIUMTEXT NOT NULL",
+                    'created_at' => "BIGINT NOT NULL",
+                ],
+                [
+                    'idx_ws_events_couple' => ['couple_id'],
+                ],
+            ],
+        ];
+    }
+
+    /** 初始化数据库连接、建表、迁移、写入默认设置（幂等，可重复调用任意次） */
     public static function init()
     {
         if (self::$pdo !== null) {
             return self::$pdo;
         }
         Config::ensureDirs();
-        $file = Config::dbFile();
 
-        try {
-            $pdo = new PDO('sqlite:' . $file);
-        } catch (PDOException $e) {
-            throw new \RuntimeException('数据库初始化失败：' . $e->getMessage()
-                . "\n请确认 " . Config::dataDir() . " 目录存在且 PHP 运行用户有读写权限。", 0, $e);
-        }
-        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-        $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
-        $pdo->setAttribute(PDO::ATTR_STRINGIFY_FETCHES, false);
-
-        // 开启 WAL（读写并发更好）；busy_timeout 避免瞬时锁冲突
-        $pdo->exec('PRAGMA journal_mode = WAL');
-        $pdo->exec('PRAGMA synchronous = NORMAL');
-        $pdo->exec('PRAGMA foreign_keys = ON');
-        $pdo->exec('PRAGMA busy_timeout = 5000');
-
-        $pdo->exec(self::SCHEMA_SQL);
+        $pdo = Database::connect([
+            'host' => Config::dbHost(),
+            'port' => Config::dbPort(),
+            'name' => Config::dbName(),
+            'user' => Config::dbUser(),
+            'pass' => Config::dbPass(),
+            'charset' => Config::dbCharset(),
+            'ssl_ca' => (string) Config::get('db_ssl_ca', ''),
+        ], true);
         self::$pdo = $pdo;
 
-        self::migrate();
-        self::seedDefaultSettings();
-        Log::info('数据库已就绪', ['file' => $file]);
+        try {
+            self::createSchema();
+            self::migrate();
+            self::seedDefaultSettings();
+        } catch (PDOException $e) {
+            self::$pdo = null;
+            throw $e;
+        }
+
+        Log::info('数据库已就绪', [
+            'dsn' => 'mysql://' . Config::dbHost() . ':' . Config::dbPort() . '/' . Config::dbName(),
+            'server' => Database::serverVersion($pdo),
+        ]);
         return $pdo;
+    }
+
+    /** 建表（CREATE TABLE IF NOT EXISTS，重复执行安全） */
+    private static function createSchema()
+    {
+        foreach (self::tables() as $table => $def) {
+            self::pdo()->exec($def[0]);
+        }
+    }
+
+    /**
+     * 轻量迁移：为旧库补齐后加的列/索引，并记录 schema_version。
+     * 用 information_schema 检查（MySQL 没有 ADD COLUMN IF NOT EXISTS），因此完全幂等。
+     */
+    private static function migrate()
+    {
+        foreach (self::tables() as $table => $def) {
+            $columns = isset($def[1]) ? $def[1] : [];
+            $indexes = isset($def[2]) ? $def[2] : [];
+            self::ensureColumns($table, $columns);
+            self::ensureIndexes($table, $indexes);
+        }
+        // 只在版本号真的不同时才写库（避免每个请求都产生一次写操作）
+        $current = self::getSetting('schema_version');
+        if ((int) $current !== (int) Config::SCHEMA_VERSION) {
+            self::setSetting('schema_version', Config::SCHEMA_VERSION);
+        }
+    }
+
+    /** 补齐缺失的列（表名/列名/类型均为代码内常量，不来自用户输入） */
+    private static function ensureColumns($table, array $columns)
+    {
+        $existing = self::tableColumns($table);
+        foreach ($columns as $column => $definition) {
+            if (isset($existing[strtolower($column)])) {
+                continue;
+            }
+            self::pdo()->exec('ALTER TABLE `' . $table . '` ADD COLUMN `' . $column . '` ' . $definition);
+            Log::info('数据库迁移：新增列', ['table' => $table, 'column' => $column]);
+        }
+    }
+
+    /** 补齐缺失的索引 */
+    private static function ensureIndexes($table, array $indexes)
+    {
+        if (count($indexes) === 0) {
+            return;
+        }
+        $existing = self::tableIndexes($table);
+        foreach ($indexes as $name => $cols) {
+            if (isset($existing[strtolower($name)])) {
+                continue;
+            }
+            $quoted = [];
+            foreach ($cols as $c) {
+                $quoted[] = '`' . $c . '`';
+            }
+            self::pdo()->exec('ALTER TABLE `' . $table . '` ADD INDEX `' . $name . '` (' . implode(', ', $quoted) . ')');
+            Log::info('数据库迁移：新增索引', ['table' => $table, 'index' => $name]);
+        }
+    }
+
+    /** 当前库中的表清单（小写表名 => 真实表名） */
+    public static function tableColumns($table)
+    {
+        $rows = self::all(
+            'SELECT COLUMN_NAME FROM information_schema.COLUMNS
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?',
+            [$table]
+        );
+        $out = [];
+        foreach ($rows as $r) {
+            $out[strtolower((string) $r['COLUMN_NAME'])] = (string) $r['COLUMN_NAME'];
+        }
+        return $out;
+    }
+
+    /** 当前表的索引清单（小写索引名 => 索引名） */
+    public static function tableIndexes($table)
+    {
+        $rows = self::all(
+            'SELECT DISTINCT INDEX_NAME FROM information_schema.STATISTICS
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?',
+            [$table]
+        );
+        $out = [];
+        foreach ($rows as $r) {
+            $out[strtolower((string) $r['INDEX_NAME'])] = (string) $r['INDEX_NAME'];
+        }
+        return $out;
+    }
+
+    /** 库中是否已有服务端核心表（安装向导判断「是否已初始化」） */
+    public static function hasCoreTables()
+    {
+        foreach (['users', 'couples', 'settings'] as $t) {
+            if (self::scalar(
+                'SELECT COUNT(*) FROM information_schema.TABLES
+                 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?',
+                [$t]
+            ) <= 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * 首次启动写入默认 settings（已存在的键绝不被覆盖）。
+     *
+     * 用 INSERT IGNORE（MySQL/MariaDB 通用）而不是 ON DUPLICATE KEY UPDATE：
+     * 后者在每次启动时都会把 value 写回默认值，会把后台改过的设置冲掉。
+     */
+    private static function seedDefaultSettings()
+    {
+        $now = Time::nowMs();
+        $stmt = self::pdo()->prepare(
+            'INSERT IGNORE INTO settings (`key`, `value`, updated_at) VALUES (?, ?, ?)'
+        );
+        foreach (Config::DEFAULTS as $key => $value) {
+            $stmt->execute([$key, json_encode($value, JSON_UNESCAPED_UNICODE), $now]);
+        }
     }
 
     /** @return PDO */
@@ -205,48 +500,26 @@ CREATE INDEX IF NOT EXISTS idx_ws_events_couple ON ws_events(couple_id);
     /** 关闭连接（CLI/测试用） */
     public static function close()
     {
-        if (self::$pdo !== null) {
-            try {
-                self::$pdo->exec('PRAGMA wal_checkpoint(TRUNCATE)');
-            } catch (PDOException $e) {
-                // 忽略
-            }
-            self::$pdo = null;
+        self::$pdo = null;
+    }
+
+    /** 数据库版本字符串（后台「服务器信息」区块展示用） */
+    public static function serverVersion()
+    {
+        try {
+            return Database::serverVersion(self::pdo());
+        } catch (\Exception $e) {
+            return '';
         }
     }
 
-    /**
-     * 轻量迁移：为旧库补齐后加的列。
-     * SQLite 不支持 ADD COLUMN IF NOT EXISTS，因此先查 PRAGMA table_info。
-     */
-    private static function migrate()
+    /** 数据库类型（MySQL / MariaDB） */
+    public static function serverEngine()
     {
-        $ensure = function ($table, $column, $definition) {
-            $cols = self::all('PRAGMA table_info(' . $table . ')');
-            foreach ($cols as $c) {
-                if (isset($c['name']) && $c['name'] === $column) {
-                    return;
-                }
-            }
-            // 表名/列名/类型均为代码内常量，不来自用户输入
-            self::pdo()->exec('ALTER TABLE ' . $table . ' ADD COLUMN ' . $column . ' ' . $definition);
-            Log::info('数据库迁移：新增列', ['table' => $table, 'column' => $column]);
-        };
-        $ensure('users', 'last_seen_at', 'INTEGER');
-        $ensure('couples', 'dissolved_at', 'INTEGER');
-        $ensure('messages', 'deleted_at', 'INTEGER');
-        $ensure('emoji_packs', 'is_system', 'INTEGER NOT NULL DEFAULT 0');
-    }
-
-    /** 首次启动写入默认 settings（已存在则不覆盖） */
-    private static function seedDefaultSettings()
-    {
-        $now = Time::nowMs();
-        $stmt = self::pdo()->prepare(
-            'INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO NOTHING'
-        );
-        foreach (Config::DEFAULTS as $key => $value) {
-            $stmt->execute([$key, json_encode($value, JSON_UNESCAPED_UNICODE), $now]);
+        try {
+            return Database::engineName(self::pdo());
+        } catch (\Exception $e) {
+            return '未知';
         }
     }
 
@@ -1005,11 +1278,11 @@ CREATE INDEX IF NOT EXISTS idx_ws_events_couple ON ws_events(couple_id);
                 self::run(
                     'INSERT INTO sync_objects (couple_id, kind, id, owner_id, updated_by, updated_at, deleted, payload, created_at)
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                     ON CONFLICT(couple_id, kind, id) DO UPDATE SET
-                       updated_by = excluded.updated_by,
-                       updated_at = excluded.updated_at,
-                       deleted    = excluded.deleted,
-                       payload    = excluded.payload',
+                     ON DUPLICATE KEY UPDATE
+                       updated_by = VALUES(updated_by),
+                       updated_at = VALUES(updated_at),
+                       deleted    = VALUES(deleted),
+                       payload    = VALUES(payload)',
                     [
                         $coupleId,
                         $obj['kind'],
@@ -1072,7 +1345,7 @@ CREATE INDEX IF NOT EXISTS idx_ws_events_couple ON ws_events(couple_id);
     /** 读取单个设置（已 JSON 反序列化） */
     public static function getSetting($key)
     {
-        $row = self::one('SELECT value FROM settings WHERE key = ?', [$key]);
+        $row = self::one('SELECT `value` FROM settings WHERE `key` = ?', [$key]);
         if (!$row) {
             return null;
         }
@@ -1083,7 +1356,7 @@ CREATE INDEX IF NOT EXISTS idx_ws_events_couple ON ws_events(couple_id);
     public static function getAllSettings()
     {
         $out = [];
-        foreach (self::all('SELECT key, value FROM settings') as $r) {
+        foreach (self::all('SELECT `key`, `value` FROM settings') as $r) {
             $out[$r['key']] = self::parseJson($r['value']);
         }
         return $out;
@@ -1092,8 +1365,8 @@ CREATE INDEX IF NOT EXISTS idx_ws_events_couple ON ws_events(couple_id);
     public static function setSetting($key, $value)
     {
         self::run(
-            'INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
-             ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at',
+            'INSERT INTO settings (`key`, `value`, updated_at) VALUES (?, ?, ?)
+             ON DUPLICATE KEY UPDATE `value` = VALUES(`value`), updated_at = VALUES(updated_at)',
             [$key, json_encode($value, JSON_UNESCAPED_UNICODE), Time::nowMs()]
         );
     }
@@ -1107,8 +1380,8 @@ CREATE INDEX IF NOT EXISTS idx_ws_events_couple ON ws_events(couple_id);
         try {
             foreach ($entries as $k => $v) {
                 self::run(
-                    'INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
-                     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at',
+                    'INSERT INTO settings (`key`, `value`, updated_at) VALUES (?, ?, ?)
+                     ON DUPLICATE KEY UPDATE `value` = VALUES(`value`), updated_at = VALUES(updated_at)',
                     [$k, json_encode($v, JSON_UNESCAPED_UNICODE), $now]
                 );
             }
@@ -1212,12 +1485,14 @@ CREATE INDEX IF NOT EXISTS idx_ws_events_couple ON ws_events(couple_id);
         ];
     }
 
-    /** 磁盘占用（字节）：数据库 + WAL + SHM + 表情目录 */
+    /**
+     * 磁盘占用（字节）：表情目录 + 数据库表数据/索引大小。
+     *
+     * MySQL 下「数据库文件」由服务端管理，这里用 information_schema 统计
+     * 本库的数据+索引字节数（比 SQLite 单文件更准确）。
+     */
     public static function getDiskUsage()
     {
-        $sum = function ($p) {
-            return is_file($p) ? (int) filesize($p) : 0;
-        };
         $emojiBytes = 0;
         $emojiFiles = 0;
         $dir = Config::emojiDir();
@@ -1236,8 +1511,16 @@ CREATE INDEX IF NOT EXISTS idx_ws_events_couple ON ws_events(couple_id);
                 }
             }
         }
-        $dbFile = Config::dbFile();
-        $dbBytes = $sum($dbFile) + $sum($dbFile . '-wal') + $sum($dbFile . '-shm');
+
+        $dbBytes = 0;
+        try {
+            $dbBytes = (int) self::scalar(
+                'SELECT COALESCE(SUM(DATA_LENGTH + INDEX_LENGTH), 0) FROM information_schema.TABLES
+                 WHERE TABLE_SCHEMA = DATABASE()'
+            );
+        } catch (PDOException $e) {
+            $dbBytes = 0;
+        }
 
         return [
             'dbBytes' => $dbBytes,

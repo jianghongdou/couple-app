@@ -222,7 +222,7 @@ class Settings
         if ($fromConfig === '') {
             return;
         }
-        $row = Db::one('SELECT value FROM settings WHERE key = ?', ['deepseekApiKey']);
+        $row = Db::one('SELECT `value` FROM settings WHERE `key` = ?', ['deepseekApiKey']);
         $current = $row ? Db::parseJson($row['value']) : '';
         if (is_string($current) && $current !== '') {
             return;

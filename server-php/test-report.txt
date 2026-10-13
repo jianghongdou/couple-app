@@ -3,6 +3,8 @@
 ========================================
 PHP 8.3.35 · WINNT · AMD64
 测试端口 8899（REST） · 8900（WebSocket） · 数据目录 ./data-test
+数据库 127.0.0.1:3307 / couple_test（couple）
+测试数据库已重建： couple_test（空库：是）
 REST 服务已启动，开始断言…
 
 1. 公开接口 /api/health、/api/meta
@@ -337,6 +339,16 @@ REST 服务已启动，开始断言…
   ✅ 日志条目含 createdAt / detail
   ✅ GET /admin/api/system 返回 PHP 版本
   ✅ /admin/api/system 报告 WebSocket 正在运行
+  ✅ /admin/api/system 返回数据库版本
+  ✅ 数据库类型为 MySQL 或 MariaDB
+  ✅ 数据库连接状态为「正常」
+  ✅ 数据库字符集为 utf8mb4
+  ✅ /admin/api/system 返回数据库端口
+  ✅ /admin/api/system 返回数据库名
+  ✅ 系统信息含表结构版本
+  ✅ 系统信息显示 JWT 密钥已配置
+  ✅ 系统信息含时区
+  ✅ 系统信息含数据目录
   ✅ 删除用户返回 200
   ✅ 删除后用户列表中不再出现
   ✅ 删除不存在的用户返回 404
@@ -411,10 +423,150 @@ REST 服务已启动，开始断言…
   ✅ 解绑后原邀请码失效（404）
 
 ----------------------------------------
-清理：关闭 WebSocket 连接、停止服务进程、删除测试数据目录
+清理：关闭 WebSocket 连接、停止服务进程、删除测试数据目录与测试数据库
 数据目录已清理：./data-test
+测试数据库已删除： couple_test
 
 ========================================
-  ✅ ALL TESTS PASSED（通过 387 项断言）
+  ✅ ALL TESTS PASSED（通过 397 项断言）
+========================================
+
+========================================
+  附：网页安装向导测试（php test/install-test.php）
+========================================
+========================================
+  情侣 App 服务端 · PHP 版安装向导测试
+========================================
+PHP 8.3.35 · WINNT
+测试端口 8897 · 测试库 couple_test_install · 配置目录 test/install-config
+数据库 127.0.0.1:3307（用户 couple）
+测试库已删除（将从零安装）： couple_test_install
+测试服务已启动（http://127.0.0.1:8897），开始断言…
+
+1. 未安装时：不再 500，而是引导到安装向导
+  ✅ 前置条件：config.php 不存在
+  ✅ GET /api/health 未安装时返回 503（不是 500）
+  ✅ /api/health 渲染安装向导页面
+  ✅ /api/health 页面含「尚未完成安装」提示
+  ✅ /api/health 页面上就有安装表单
+  ✅ 非 HTML 请求（iOS 客户端）返回 503
+  ✅ API 请求返回结构化 JSON 错误 db_unavailable
+  ✅ JSON 错误响应仍带 serverTime
+  ✅ GET /admin.php 未安装时返回 503（不是 500）
+  ✅ /admin.php 渲染安装向导页面
+  ✅ /api/meta 同样引导到安装向导
+
+2. GET /install.php 渲染表单与环境自检
+  ✅ GET /install.php 返回 200
+  ✅ Content-Type 为 text/html
+  ✅ 页面含安装表单
+  ✅ 表单含数据库主机字段
+  ✅ 表单含数据库端口字段
+  ✅ 表单含数据库名字段
+  ✅ 表单含数据库用户名字段
+  ✅ 表单含数据库密码字段
+  ✅ 表单含「自动建库」勾选项
+  ✅ 表单含后台密码字段
+  ✅ 表单含后台确认密码字段
+  ✅ 表单含站点地址字段（可选）
+  ✅ 页面含 viewport（手机可看）
+  ✅ 页面含「环境自检」区块
+  ✅ 自检项含 PHP 版本
+  ✅ 自检项显示真实 PHP 版本 8.3.35
+  ✅ 自检项含 pdo_mysql
+  ✅ 自检项含 curl
+  ✅ 自检项含 openssl
+  ✅ 自检项含 mbstring
+  ✅ 自检项含「代码目录可写」
+  ✅ 自检项含数据库连接测试
+  ✅ 目录不可写时才提示 chown 命令
+  ✅ 表单不要求填写 jwt_secret（自动生成）
+  ✅ 页面不回显数据库密码
+  ✅ 表单含 CSRF token
+
+3. 错误场景：CSRF 缺失 / 数据库密码错误（都不生成 config.php）
+  ✅ 缺少 CSRF token 的 POST 被拒（返回表单页）
+  ✅ 缺少 CSRF 时给出中文提示
+  ✅ 缺少 CSRF 时不会生成 config.php
+  ✅ 数据库密码错误时返回表单页（不 500）
+  ✅ 错误提示为可读中文（账号或密码错误）
+  ✅ 错误提示不回显填写的数据库密码
+  ✅ 数据库密码错误时不生成 config.php
+  ✅ 失败后表单仍带 CSRF token
+  ✅ 两次密码不一致时中文报错
+  ✅ 两次密码不一致时不生成 config.php
+  ✅ 后台密码过短时中文报错（至少 6 位）
+  ✅ 后台密码过短时不生成 config.php
+
+4. 正式安装：自动建库 + 建表 + 生成 config.php
+  ✅ 安装前：数据库 couple_test_install 不存在
+  ✅ POST /install.php 返回 200
+  ✅ 成功页显示「安装完成」
+  ✅ 成功页给出后台地址 /admin.php
+  ✅ 成功页给出 /api/health 自检链接
+  ✅ 成功页提示下一步（install.php 可删除/忽略）
+  ✅ 成功页提示已按 utf8mb4 建库
+  ✅ config.php 已生成
+  ✅ 数据库与核心表已创建（11 张表）
+  ✅ 建表数量完整（users/couples/messages/emoji_packs/emoji_items/sync_objects/settings/ai_usage/admin_logs/rate_limits/ws_events = 11 张）
+  ✅ 默认 settings 已写入（13 项）
+  ✅ 已写入 schema_version
+  ✅ config.php 含 db_* 配置
+  ✅ config.php 的 db_name 正确
+  ✅ config.php 含 jwt_secret
+  ✅ jwt_secret 为自动生成的随机串（长度 64）
+  ✅ config.php 的后台密码与填写的一致
+  ✅ config.php 写入站点地址（用于表情绝对地址）
+  ✅ config.php 含 timezone / ws_port 等运行参数
+  ✅ config.php 是合法 PHP 文件
+  ✅ config.php 可被 PHP 正常载入且内容正确
+  ✅ config.php 权限检查跳过（Windows）
+
+5. 安装后：API 与后台可用
+  ✅ 安装后 GET /api/health 返回 200
+  ✅ health.ok 为 true
+  ✅ health 契约字段不变（name/version）
+  ✅ 安装后 /api/meta 正常
+  ✅ 安装后 /api/status 数据库正常
+  ✅ GET /admin.php 返回后台页面
+  ✅ 错误密码登录后台返回 401
+  ✅ 用安装时设置的后台密码登录成功
+  ✅ 登录返回后台 token
+  ✅ GET /admin/api/system 返回 200
+  ✅ 系统信息含数据库版本
+  ✅ 系统信息显示数据库连接正常
+  ✅ 系统信息显示正确的数据库名
+  ✅ 系统信息显示 JWT 密钥已配置
+  ✅ 系统信息含数据目录
+  ✅ 系统信息含时区
+
+6. 已安装锁定：再访问安装向导一律 403
+  ✅ 已安装后 GET /install.php 返回 403
+  ✅ 403 页面提示「已安装。如需重装请先删除 config.php」
+  ✅ 403 页面不再输出安装表单
+  ✅ 已安装后 POST /install.php 也返回 403
+  ✅ POST 被拒时同样给出中文提示
+  ✅ 已有数据库未被重装请求破坏
+  ✅ config.php 未被重装请求覆盖
+
+7. 幂等：连续初始化 3 次不报错、不丢表、不产生脏数据
+  ✅ 连续调用启动/初始化 3 次均成功（幂等）
+  ✅ 幂等执行后表数量不变（11 张）
+  ✅ 幂等执行不产生脏数据（users 仍为空）
+  ✅ 幂等执行后默认设置仍在（14 项）
+
+8. 命令行自检（php bin/console.php check）
+  ✅ console.php check 输出「配置检查通过」
+  ✅ console.php check 显示数据库类型
+  ✅ console.php check 显示数据库版本
+  ✅ console.php check 显示连接状态
+
+----------------------------------------
+清理：停止服务、删除测试库与测试配置目录
+测试库已删除： couple_test_install
+测试配置目录已删除： test/install-config
+
+========================================
+  ✅ ALL INSTALL TESTS PASSED（通过 102 项断言）
 ========================================
 

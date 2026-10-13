@@ -24,7 +24,7 @@ class PublicEmoji
     public static function syncIfChanged()
     {
         $fingerprint = self::fingerprint();
-        $row = Db::one('SELECT value FROM settings WHERE key = ?', ['publicEmojiFingerprint']);
+        $row = Db::one('SELECT `value` FROM settings WHERE `key` = ?', ['publicEmojiFingerprint']);
         $current = $row ? (string) Db::parseJson($row['value']) : '';
         if ($current === $fingerprint) {
             return ['packs' => 0, 'items' => 0, 'skipped' => true];
@@ -80,10 +80,11 @@ class PublicEmoji
                 continue;
             }
 
+            // 已存在则保持原样（不能写 ON DUPLICATE KEY UPDATE name=VALUES(name)：
+            // 后台改过的包名会被磁盘目录名冲掉），这里用 INSERT IGNORE 保持幂等
             Db::run(
-                'INSERT INTO emoji_packs (id, name, owner_id, couple_id, is_public, is_system, created_at, updated_at)
-                 VALUES (?, ?, \'system\', \'\', 1, 1, ?, ?)
-                 ON CONFLICT(id) DO UPDATE SET name = excluded.name, updated_at = excluded.updated_at',
+                'INSERT IGNORE INTO emoji_packs (id, name, owner_id, couple_id, is_public, is_system, created_at, updated_at)
+                 VALUES (?, ?, \'system\', \'\', 1, 1, ?, ?)',
                 [$packId, $packName, $now, $now]
             );
             // 重建该包内容，保证与磁盘一致
@@ -108,8 +109,9 @@ class PublicEmoji
                     continue;
                 }
                 $baseName = preg_replace('/\.[^.]+$/', '', $fileName);
+                // MySQL 通用写法：REPLACE INTO（等价于 SQLite 的 INSERT OR REPLACE）
                 Db::run(
-                    'INSERT OR REPLACE INTO emoji_items
+                    'REPLACE INTO emoji_items
                        (id, pack_id, owner_id, couple_id, mime, size, name, created_at, updated_at)
                      VALUES (?, ?, \'system\', \'\', ?, ?, ?, ?, ?)',
                     ['e_public' . $packIdx . $fileIdx, $packId, $mime, strlen($buf), $baseName, $now, $now]

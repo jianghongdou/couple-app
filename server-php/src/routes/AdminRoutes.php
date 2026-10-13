@@ -8,6 +8,7 @@ use App\Db;
 use App\DeepSeek;
 use App\Http;
 use App\HttpException;
+use App\Installer;
 use App\Log;
 use App\RateLimit;
 use App\Runtime;
@@ -307,6 +308,14 @@ class AdminRoutes
         // GET /admin/api/system —— 附加系统信息（后台页面展示用）
         $r->get('/admin/api/system', function () use ($admin) {
             $admin();
+            $dbVersion = Db::serverVersion();
+            $dbEngine = Db::serverEngine();
+            $dbOk = false;
+            try {
+                $dbOk = Db::pingDb();
+            } catch (\Exception $e) {
+                $dbOk = false;
+            }
             Http::ok([
                 'php' => PHP_VERSION,
                 'platform' => PHP_OS . ' ' . php_uname('m'),
@@ -323,6 +332,23 @@ class AdminRoutes
                     'dataDir' => Config::dataDir(),
                     'wsPort' => (int) Config::get('ws_port', 8900),
                 ],
+                // 数据库（MySQL / MariaDB）信息
+                'database' => [
+                    'engine' => $dbEngine,
+                    'version' => $dbVersion,
+                    'host' => Config::dbHost(),
+                    'port' => Config::dbPort(),
+                    'name' => Config::dbName(),
+                    'user' => Config::dbUser(),
+                    'charset' => Config::dbCharset(),
+                    'connected' => $dbOk,
+                    'schemaVersion' => (int) Db::getSetting('schema_version'),
+                ],
+                'timezone' => date_default_timezone_get(),
+                'jwtSecretConfigured' => (string) Config::get('jwt_secret', '') !== '',
+                'adminPasswordConfigured' => (string) Config::get('admin_password', '') !== '',
+                'installed' => Installer::isConfigured(),
+                'configFile' => Config::configFile(),
             ]);
         });
     }

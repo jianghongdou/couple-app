@@ -4,10 +4,27 @@
  *
  * 内联 CSS / JS，无构建、无外部依赖；深色主题、全中文。
  * 既可以经路由（/admin）访问（由 public/index.php include 本文件），
- * 也可以直接访问 /admin.php。
+ * 也可以直接访问 /admin.php（宝塔/nginx 下就是这种情况）。
  *
  * 所有数据都通过 /admin/api/* 拉取；DeepSeek Key 只以掩码形式出现在页面上。
+ *
+ * 未安装（缺 config.php / 数据库连不上）时不再白屏或 500，
+ * 而是直接渲染安装向导，引导用户先完成安装。
  */
+
+require_once __DIR__ . '/../src/Bootstrap.php';
+App\Bootstrap::registerAutoloader();
+
+if (App\Installer::needsSetup()) {
+    if (!headers_sent()) {
+        http_response_code(503);
+        header('Content-Type: text/html; charset=utf-8');
+        header('Cache-Control: no-store');
+    }
+    App\Installer::renderBanner('数据库尚未配置，请先完成安装。');
+    return;
+}
+
 if (!headers_sent()) {
     header('Content-Type: text/html; charset=utf-8');
     header('Cache-Control: no-store');
@@ -555,13 +572,24 @@ td.actions{display:flex;gap:6px;flex-wrap:wrap}
     }).catch(function (err) { toast(err.message, 'err'); });
 
     api('/system').then(function (s) {
+      var db = s.database || {};
+      var dbText = (db.engine ? db.engine + ' ' : '') + (db.version || '未知版本');
+      if (db.host) dbText += ' · ' + db.host + ':' + db.port + '/' + db.name;
       $('sysInfo').innerHTML =
         'PHP <span class="mono">' + esc(s.php) + '</span> · ' +
         '平台 <span class="mono">' + esc(s.platform) + '</span> · ' +
         '运行方式 <span class="mono">' + esc(s.sapi) + '</span> · ' +
         '已运行 <span class="mono">' + Math.floor(s.uptimeSeconds / 60) + ' 分钟</span> · ' +
-        '内存 <span class="mono">' + fmtBytes(s.memoryBytes) + '</span> · ' +
+        '内存 <span class="mono">' + fmtBytes(s.memoryBytes) + '</span><br>' +
+        '数据库 <span class="mono">' + esc(dbText) + '</span> · ' +
+        '连接 <span class="mono" style="color:' + (db.connected ? 'var(--green)' : 'var(--red)') + '">'
+          + (db.connected ? '正常' : '异常') + '</span> · ' +
+        '字符集 <span class="mono">' + esc(db.charset || 'utf8mb4') + '</span> · ' +
+        '表结构版本 <span class="mono">' + esc(db.schemaVersion != null ? db.schemaVersion : '-') + '</span><br>' +
         '数据目录 <span class="mono">' + esc(s.env.dataDir) + '</span> · ' +
+        '时区 <span class="mono">' + esc(s.timezone || '-') + '</span> · ' +
+        'JWT 密钥 <span class="mono">' + (s.jwtSecretConfigured ? '已配置' : '未配置') + '</span> · ' +
+        '后台密码 <span class="mono">' + (s.adminPasswordConfigured ? '已配置' : '未配置') + '</span><br>' +
         'WebSocket <span class="mono">' + (s.wsRunning ? ('运行中（在线 ' + s.wsOnline + '）') : '未运行') + '</span>';
     }).catch(function () { $('sysInfo').textContent = '无法获取系统信息'; });
   }

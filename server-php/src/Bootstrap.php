@@ -55,7 +55,8 @@ class Bootstrap
 
         self::registerAutoloader();
 
-        // 缺 jwt_secret / admin_password 时打印中文提示并拒绝启动
+        // 未安装（缺 config.php / 缺 db_* 或密钥）时抛 InstallRequired；
+        // Web 入口会渲染安装向导，CLI 会给出中文引导，都不再直接 Fatal error。
         Config::assertConfig();
 
         date_default_timezone_set((string) Config::get('timezone', 'Asia/Shanghai'));
@@ -67,7 +68,13 @@ class Bootstrap
         set_error_handler([__CLASS__, 'handlePhpError']);
 
         Config::ensureDirs();
-        Db::init();
+        try {
+            Db::init();
+        } catch (DbConnectionError $e) {
+            // 数据库连不上：Web 引导到安装向导，CLI 给中文提示
+            Log::error('数据库连接失败', ['error' => $e->detail(), 'db' => Config::dbLabel()]);
+            throw $e;
+        }
         Settings::seedFromConfig();
         Runtime::ensureBoot();
 
@@ -115,9 +122,22 @@ class Bootstrap
             $status = $e->getStatus();
             $code = $e->getErrorCode();
             $message = $e->getMessage();
+        } elseif ($e instanceof DbConnectionError) {
+            Log::error('数据库连接异常', ['error' => $e->detail()]);
+            $status = 503;
+            $code = 'db_unavailable';
+            $message = '数据库暂时不可用，请按安装向导检查数据库配置';
         } elseif ($e instanceof PDOException) {
             $text = $e->getMessage();
-            if (stripos($text, 'UNIQUE constraint failed') !== false || stripos($text, 'constraint') !== false) {
+            // MySQL 唯一键/外键冲突统一映射为 409 conflict（对应 SQLite 的 UNIQUE constraint failed）
+            $sqlState = method_exists($e, 'getCode') ? (string) $e->getCode() : '';
+            $sqlErrno = isset($e->errorInfo[1]) ? (int) $e->errorInfo[1] : 0;
+            $isConflict = $sqlState === '23000'
+                || in_array($sqlErrno, [1062, 1451, 1452], true)
+                || stripos($text, 'UNIQUE constraint failed') !== false
+                || stripos($text, 'Duplicate entry') !== false
+                || stripos($text, 'constraint') !== false;
+            if ($isConflict) {
                 Log::warn('数据库约束冲突', ['error' => $text]);
                 $status = 409;
                 $code = 'conflict';
@@ -166,7 +186,22 @@ class Bootstrap
      */
     public static function run()
     {
-        self::boot();
+        self::registerAutoloader();
+
+        // 未安装 / 数据库连不上 -> 渲染安装向导，而不是抛 Fatal error
+        if (Installer::needsSetup()) {
+            self::renderInstallPage(503, '尚未完成安装');
+            return;
+        }
+        try {
+            self::boot();
+        } catch (DbConnectionError $e) {
+            self::renderInstallPage(503, $e->getMessage());
+            return;
+        } catch (InstallRequired $e) {
+            self::renderInstallPage(503, $e->getMessage());
+            return;
+        }
 
         Http::securityHeaders();
         $path = Http::rawPath();
@@ -202,6 +237,15 @@ class Bootstrap
         $router->get('/admin/', $adminPage);
         $router->get('/admin.php', $adminPage);
 
+        // 安装向导（/install、/install.php、/install/）
+        $installPage = function () {
+            include Config::publicDir() . '/install.php';
+        };
+        $router->get('/install', $installPage);
+        $router->get('/install/', $installPage);
+        $router->get('/install.php', $installPage);
+        $router->post('/install.php', $installPage);
+
         // 首页：给一个简短的说明页，避免直接访问报 404
         $router->get('/', function () {
             if (!headers_sent()) {
@@ -232,6 +276,41 @@ class Bootstrap
 
         // 未匹配的接口统一返回 not_found
         Http::error(404, 'not_found', '接口不存在：' . Http::method() . ' ' . Http::routePath());
+    }
+
+    /**
+     * 未安装 / 数据库连不上时的统一出口：渲染安装向导页面。
+     *
+     * 浏览器请求返回 HTML（200/503），非 HTML 请求（iOS 客户端 / curl）返回
+     * 结构化 JSON（503 db_unavailable），避免客户端拿到一坨 HTML。
+     */
+    private static function renderInstallPage($status, $reason)
+    {
+        $accept = isset($_SERVER['HTTP_ACCEPT']) ? (string) $_SERVER['HTTP_ACCEPT'] : '';
+        $wantsHtml = stripos($accept, 'text/html') !== false;
+        $isApi = false;
+        if (isset($_SERVER['REQUEST_URI'])) {
+            $uri = (string) $_SERVER['REQUEST_URI'];
+            $isApi = strpos($uri, '/api/') !== false || strpos($uri, '/admin/api/') !== false;
+        }
+        if ($isApi && !$wantsHtml) {
+            Http::error(503, 'db_unavailable', '服务尚未完成安装，请先在浏览器打开 ' . Config::installUrl() . ' 完成安装');
+            return;
+        }
+
+        // 渲染安装向导（含环境自检、数据库表单）
+        if (!headers_sent()) {
+            http_response_code((int) $status);
+            header('Content-Type: text/html; charset=utf-8');
+            header('Cache-Control: no-store');
+            header('X-Content-Type-Options: nosniff');
+            header('Referrer-Policy: no-referrer');
+        }
+        try {
+            Installer::renderBanner($reason);
+        } catch (\Throwable $e) {
+            echo '服务尚未完成安装，请打开 /install.php 完成配置。';
+        }
     }
 
     /** 输出 public/ 下的静态文件（带路径穿越防护） */
