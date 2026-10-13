@@ -7,6 +7,11 @@ options:
   groupSortPosition: top
   generateEmptyDirectories: false
   xcodeVersion: "15.0"
+  # ⚠️ 必须显式指定：XcodeGen 2.46+ 默认生成 Xcode 16 格式（objectVersion 77），
+  # 而 GitHub Actions 的 macos-14 跑的是 Xcode 15.4，会报
+  # "cannot be opened because it is in a future Xcode project file format (77)"。
+  # xcode15_0 = objectVersion 60，Xcode 15 与 Xcode 16 都能正常打开。
+  projectFormat: xcode15_0
 
 settings:
   base:
