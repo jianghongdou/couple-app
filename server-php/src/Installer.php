@@ -251,6 +251,9 @@ class Installer
         }
 
         // 8) 立刻建表 + 初始化默认设置（幂等），并做一次真实自检
+        //    注意：必须先让 Config 丢掉启动时缓存的旧配置（那时 config.php 还不存在，
+        //    db_user 是空的），否则 Db::init() 会读到空值并报「MySQL 用户名不能为空」。
+        Config::reload();
         try {
             Db::close();
             Db::init();
@@ -259,6 +262,7 @@ class Installer
             }
         } catch (\Throwable $e) {
             @unlink($configPath);
+            Config::reload();   // 已回滚配置，恢复「未安装」状态的缓存
             $msg = $e instanceof PDOException ? Database::shortReason($e->getMessage()) : $e->getMessage();
             $errors[] = '数据表初始化失败：' . $msg . '（已回滚生成的 config.php，可修正数据库信息后重新提交）';
             return false;

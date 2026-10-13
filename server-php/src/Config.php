@@ -124,6 +124,22 @@ class Config
     }
 
     /**
+     * 重新载入配置（清空静态缓存后再读一次）。
+     *
+     * 用途：网页安装向导写完 config.php 后**必须**调用一次。否则静态缓存里
+     * 还是「未安装」时的旧值（db_user 为空），紧接着建表就会失败并报
+     * 「MySQL 用户名不能为空，请在安装向导里填写数据库用户名」。
+     */
+    public static function reload()
+    {
+        self::$loaded = false;
+        self::$values = [];
+        self::$errors = [];
+        self::$configFile = null;
+        self::load();
+    }
+
+    /**
      * 载入配置（幂等）。
      */
     public static function load()

@@ -382,11 +382,10 @@ $env = childEnv([
         'db_user' => $DB_USER,
         'db_pass' => $DB_PASS,
     ], JSON_UNESCAPED_UNICODE),
-    'DB_HOST' => $DB_HOST,
-    'DB_PORT' => (string) $DB_PORT,
-    'DB_NAME' => $DB_NAME,
-    'DB_USER' => $DB_USER,
-    'DB_PASS' => $DB_PASS,
+    // 注意：这里**故意不设** DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASS 环境变量。
+    // 那些变量会被 Config 当作环境覆盖，从而把「安装向导写完 config.php 后
+    // 必须重载配置」这类 bug 掩盖掉（曾经真的漏了一个：Db::init() 读到启动时
+    // 缓存的空 db_user，报「MySQL 用户名不能为空」）。数据库信息只允许来自表单提交。
     'DATA_DIR' => './data-install-test',
     'PORT' => (string) $PORT,
     'TIMEZONE' => 'Asia/Shanghai',
