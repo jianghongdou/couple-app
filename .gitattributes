@@ -1,0 +1,44 @@
+# 换行符统一策略
+# 目的：Windows 上开发，但构建（GitHub Actions 的 macOS/Linux）与部署（Linux 服务器）都要求 LF。
+# 说明：`* text=auto` 会让 git 在检出时按系统转换（Windows → CRLF），
+#       所以下面把所有「会被脚本/容器读取」的文本文件显式钉成 LF。
+* text=auto
+
+# —— 必须是 LF 的文本文件 ——
+*.sh            text eol=lf
+*.bash          text eol=lf
+*.mjs           text eol=lf
+*.js            text eol=lf
+*.cjs           text eol=lf
+*.json          text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+*.md            text eol=lf
+*.swift         text eol=lf
+*.plist         text eol=lf
+*.html          text eol=lf
+*.css           text eol=lf
+*.txt           text eol=lf
+*.conf          text eol=lf
+*.example       text eol=lf
+Dockerfile      text eol=lf
+.dockerignore   text eol=lf
+.npmrc          text eol=lf
+.gitignore      text eol=lf
+.gitattributes  text eol=lf
+
+# —— Windows 脚本保持 CRLF（PowerShell 5.1 / cmd 最稳）——
+*.ps1           text eol=crlf
+*.bat           text eol=crlf
+*.cmd           text eol=crlf
+
+# —— 二进制文件不做任何转换 ——
+*.png           binary
+*.jpg           binary
+*.jpeg          binary
+*.gif           binary
+*.webp          binary
+*.ipa           binary
+*.zip           binary
+*.sqlite        binary
+*.db            binary

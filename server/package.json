@@ -1,0 +1,27 @@
+{
+  "name": "couple-server",
+  "version": "1.0.0",
+  "description": "情侣 App 自建服务端（REST + WebSocket + 后台管理 + 表情包 + AI 代理）",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node test/smoke.mjs",
+    "test:all": "node test/run.mjs",
+    "init-db": "node src/init-db.js",
+    "fetch-sqlite": "node scripts/fetch-sqlite-binary.mjs"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "better-sqlite3": "^12.11.1",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "ws": "^8.18.0"
+  }
+}

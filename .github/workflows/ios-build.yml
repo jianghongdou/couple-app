@@ -1,0 +1,117 @@
+name: 构建 iOS IPA
+
+# 触发方式：
+#   1. 手动（推荐）：仓库页面 → Actions → 构建 iOS IPA → Run workflow → 选择版本
+#   2. 打 tag：git tag v1.0.0 && git push --tags（会自动构建并挂到 Release）
+on:
+  workflow_dispatch:
+    inputs:
+      variant:
+        description: "构建哪个版本"
+        type: choice
+        required: true
+        default: "all"
+        options:
+          - all      # 完整版 + 轻量版都构建（推荐）
+          - full     # 只构建完整版（含灵动岛扩展）
+          - lite     # 只构建轻量版（证书无法签名扩展时用）
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  # ------------------------------------------------------------------
+  # 1) 快速语法检查：几分钟内就能发现明显语法错误
+  # ------------------------------------------------------------------
+  swift-syntax-check:
+    name: Swift 语法检查
+    runs-on: ubuntu-latest
+    container: swift:5.9
+    steps:
+      - uses: actions/checkout@v4
+      - name: 检查全部 Swift 文件语法
+        run: |
+          echo "Swift 版本："
+          swift --version
+          find ios/Sources -name '*.swift' -print0 | xargs -0 -n 40 swiftc -parse
+          echo "✅ 语法检查通过"
+
+  # ------------------------------------------------------------------
+  # 2) 服务端冒烟测试
+  # ------------------------------------------------------------------
+  server-test:
+    name: 服务端测试
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: 安装依赖
+        working-directory: server
+        # CI 在国外，强制走官方源（server/.npmrc 是给国内网络用的镜像）
+        run: npm install --registry=https://registry.npmjs.org/
+      - name: 冒烟测试
+        working-directory: server
+        run: npm test
+
+  # ------------------------------------------------------------------
+  # 3) 构建未签名 IPA
+  # ------------------------------------------------------------------
+  build-ipa:
+    name: 构建 IPA
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 XcodeGen
+        run: brew install xcodegen
+
+      - name: 环境信息
+        run: |
+          xcodebuild -version
+          xcodegen --version
+          mkdir -p build dist
+
+      - name: 构建完整版（含灵动岛扩展）
+        if: ${{ github.event_name == 'push' || inputs.variant == 'all' || inputs.variant == 'full' }}
+        run: bash scripts/build-ipa.sh CoupleApp CoupleApp-unsigned
+
+      - name: 构建轻量版（无扩展）
+        if: ${{ github.event_name == 'push' || inputs.variant == 'all' || inputs.variant == 'lite' }}
+        run: bash scripts/build-ipa.sh CoupleAppLite CoupleAppLite-unsigned
+
+      - name: 上传完整版 IPA
+        if: ${{ github.event_name == 'push' || inputs.variant == 'all' || inputs.variant == 'full' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: CoupleApp-unsigned-ipa
+          path: dist/CoupleApp-unsigned.ipa
+          if-no-files-found: error
+
+      - name: 上传轻量版 IPA
+        if: ${{ github.event_name == 'push' || inputs.variant == 'all' || inputs.variant == 'lite' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: CoupleAppLite-unsigned-ipa
+          path: dist/CoupleAppLite-unsigned.ipa
+          if-no-files-found: error
+
+      - name: 上传编译日志（构建失败时排查用）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-logs
+          path: build/*-xcodebuild.log
+          if-no-files-found: ignore
+
+      - name: 挂到 Release（打 tag 时）
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.ipa
+          generate_release_notes: true

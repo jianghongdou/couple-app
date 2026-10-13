@@ -1,0 +1,130 @@
+name: CoupleApp
+options:
+  bundleIdPrefix: com.coupleapp
+  deploymentTarget:
+    iOS: "16.1"
+  createIntermediateGroups: true
+  groupSortPosition: top
+  generateEmptyDirectories: false
+  xcodeVersion: "15.0"
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    IPHONEOS_DEPLOYMENT_TARGET: "16.1"
+    TARGETED_DEVICE_FAMILY: "1"
+    ENABLE_BITCODE: NO
+    CODE_SIGN_STYLE: Automatic
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    GENERATE_INFOPLIST_FILE: NO
+    SWIFT_EMIT_LOC_STRINGS: NO
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+    ALWAYS_SEARCH_USER_PATHS: NO
+    CLANG_ENABLE_OBJC_ARC: YES
+    SWIFT_TREAT_WARNINGS_AS_ERRORS: NO
+    GCC_TREAT_WARNINGS_AS_ERRORS: NO
+  configs:
+    Debug:
+      SWIFT_OPTIMIZATION_LEVEL: "-Onone"
+      SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
+      ONLY_ACTIVE_ARCH: YES
+    Release:
+      SWIFT_OPTIMIZATION_LEVEL: "-O"
+      SWIFT_COMPILATION_MODE: wholemodule
+      ONLY_ACTIVE_ARCH: NO
+      VALIDATE_PRODUCT: YES
+
+targets:
+  # ---------------------------------------------------------------
+  # 灵动岛 / 锁屏实时活动 小组件扩展
+  # 只有「完整版」App 才会内嵌它
+  # ---------------------------------------------------------------
+  CoupleWidgets:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: Sources/Features/Live/Shared
+      - path: Sources/Features/Live/Widget
+    settings:
+      base:
+        PRODUCT_NAME: CoupleWidgets
+        PRODUCT_BUNDLE_IDENTIFIER: com.coupleapp.ios.widget
+        INFOPLIST_FILE: Support/Widget-Info.plist
+        APPLICATION_EXTENSION_API_ONLY: YES
+        SKIP_INSTALL: YES
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks"
+    dependencies:
+      - sdk: WidgetKit.framework
+      - sdk: SwiftUI.framework
+      - sdk: ActivityKit.framework
+
+  # ---------------------------------------------------------------
+  # 完整版：带灵动岛实时活动
+  # ---------------------------------------------------------------
+  CoupleApp:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+        excludes:
+          - "Features/Live/Widget"
+          - "Features/Live/Widget/**"
+      - path: Support/App-Info.plist
+        buildPhase: none
+    settings:
+      base:
+        PRODUCT_NAME: CoupleApp
+        PRODUCT_BUNDLE_IDENTIFIER: com.coupleapp.ios
+        INFOPLIST_FILE: Support/App-Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) ENABLE_WIDGET_EXTENSION"
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks"
+    dependencies:
+      - target: CoupleWidgets
+        embed: true
+        codeSign: false
+
+  # ---------------------------------------------------------------
+  # 轻量版：不内嵌扩展，只给「证书/描述文件无法签名扩展」的人用
+  # 灵动岛会降级为 App 内的灵动岛样式卡片
+  # ---------------------------------------------------------------
+  CoupleAppLite:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+        excludes:
+          - "Features/Live/Widget"
+          - "Features/Live/Widget/**"
+      - path: Support/App-Info-Lite.plist
+        buildPhase: none
+    settings:
+      base:
+        PRODUCT_NAME: CoupleAppLite
+        PRODUCT_BUNDLE_IDENTIFIER: com.coupleapp.ios.lite
+        INFOPLIST_FILE: Support/App-Info-Lite.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks"
+
+schemes:
+  CoupleApp:
+    build:
+      targets:
+        CoupleApp: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+    archive:
+      config: Release
+  CoupleAppLite:
+    build:
+      targets:
+        CoupleAppLite: all
+    run:
+      config: Debug
+    archive:
+      config: Release

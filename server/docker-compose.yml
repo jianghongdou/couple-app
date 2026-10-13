@@ -1,0 +1,50 @@
+# 情侣 App 服务端 docker-compose 配置
+#
+# 使用步骤：
+#   1. 复制 .env.example 为 .env 并填写 JWT_SECRET / ADMIN_PASSWORD
+#   2. docker compose up -d
+#   3. 访问 http://服务器IP:8787/admin 进入后台
+#
+# 提示：生产环境建议在容器前再挂一层 Nginx（见 nginx.conf.example），
+#       并把端口映射改为 127.0.0.1:8787:8787，只允许本机代理访问。
+
+services:
+  couple-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: couple-server:1.0.0
+    container_name: couple-server
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # 容器内统一使用 /app/data（与 Dockerfile 保持一致）
+      DATA_DIR: /app/data
+      PORT: 8787
+      TZ: Asia/Shanghai
+    ports:
+      # 对外暴露端口；若前面有 Nginx，建议改为 "127.0.0.1:8787:8787"
+      - "8787:8787"
+    volumes:
+      # 数据持久化：SQLite 数据库 + 表情图片
+      - couple-data:/app/data
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8787/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  couple-data:
+    driver: local

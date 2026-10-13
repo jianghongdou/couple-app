@@ -1,0 +1,288 @@
+
+========================================
+  情侣 App 服务端 · 端到端冒烟测试
+========================================
+Node v24.19.0 · win32 x64
+测试端口 8799 · 数据目录 ./data-test
+服务已启动，开始断言…
+
+1. 公开接口 /api/health、/api/meta
+  ✅ GET /api/health 返回 200
+  ✅ health.ok 为 true
+  ✅ health.name 为 "couple-server"
+  ✅ health.version 为 "1.0.0"
+  ✅ health.time 是毫秒时间戳
+  ✅ GET /api/meta 返回 200
+  ✅ meta.appName 为 "情侣空间"
+  ✅ meta.registerOpen 默认 true
+  ✅ meta.minAppBuild 是数字
+  ✅ meta.latestAppBuild 是数字
+  ✅ meta.announcement 是字符串
+  ✅ meta.updateURL 是字符串
+  ✅ meta.features 含 chat/emoji/ai/sync
+  ✅ meta.serverTime 是数字
+
+2. 注册两个用户 → 建情侣空间 → 邀请码加入
+  ✅ 用户 A 注册返回 200
+  ✅ 注册响应含 token
+  ✅ 注册响应 user.username 正确
+  ✅ 注册响应 user.nickname 正确
+  ✅ 注册响应 user.avatarEmoji 正确
+  ✅ 未绑定时 user.coupleId 为 null
+  ✅ 未绑定时 couple 为 null
+  ✅ user.role 为 "user"
+  ✅ user.disabled 为 false
+  ✅ user.createdAt 是数字
+  ✅ user.id 使用 u_ 前缀
+  ✅ 响应不包含密码哈希字段
+  ✅ 用户 B 注册返回 200
+  ✅ 重复用户名注册返回 409 conflict
+  ✅ 过短用户名返回 400 invalid_input
+  ✅ A 创建情侣空间返回 200
+  ✅ couple.id 使用 c_ 前缀
+  ✅ inviteCode 为 6 位
+  ✅ anniversaryTitle 默认 "在一起"
+  ✅ togetherDate 默认 null
+  ✅ 创建后 members 含 1 人
+  ✅ 已有空间再次创建返回 409 conflict
+  ✅ 无效邀请码返回 404 not_found
+  ✅ B 用邀请码加入返回 200
+  ✅ B 加入的是同一个情侣空间
+  ✅ GET /api/couple 返回 200
+  ✅ GET /api/couple 能看到 2 个成员
+  ✅ members 含双方完整 user 对象
+  ✅ members 中每个 user 含 username/nickname/coupleId
+  ✅ 空间已满时加入返回 409 conflict
+  ✅ 已绑定用户再次加入返回 409
+
+3. 同步接口 /api/sync/push 与 /api/sync/pull
+  ✅ A 推送 wish 返回 200
+  ✅ applied 含刚推送的对象 id
+  ✅ conflicts 为空
+  ✅ B 拉取同步数据返回 200
+  ✅ B 拉到了 A 推送的 wish
+  ✅ 拉到的对象 kind 为 wish
+  ✅ payload 原样保留
+  ✅ ownerId 为 A 的 id
+  ✅ updatedBy 为 A 的 id
+  ✅ deleted 为 false
+  ✅ 响应含 hasMore 布尔值
+  ✅ 响应含 serverTime
+  ✅ 推送 kind=ledger 被拒绝（400）
+  ✅ ledger 拒绝时 error 为 invalid_input
+  ✅ ledger 拒绝消息说明了「只存手机本地」
+  ✅ 推送 kind=vault 被拒绝（400）
+  ✅ 推送非白名单 kind 被拒绝（400）
+  ✅ 单次推送 201 个对象被拒绝（400）
+  ✅ LWW 旧数据推送请求本身返回 200
+  ✅ LWW：更旧的 updatedAt 被列为 conflict
+  ✅ LWW：更新的 updatedAt 被接受
+  ✅ kinds=pet 过滤拉取返回 200
+  ✅ kinds 过滤生效（只返回 pet）
+  ✅ limit 超过 1000 被拒绝（400）
+  ✅ 未绑定情侣的用户推送同步数据返回 403 forbidden
+
+4. 聊天 /api/chat/*
+  ✅ WebSocket 收到 hello 事件
+  ✅ hello.user 是 B 本人
+  ✅ hello.coupleId 正确
+  ✅ hello.serverTime 是数字
+  ✅ A 发送消息返回 200
+  ✅ message.id 使用 m_ 前缀
+  ✅ message.clientId 原样返回
+  ✅ message.coupleId 正确
+  ✅ message.senderId 为 A
+  ✅ message.kind 为 text
+  ✅ message.body 为 "晚安"
+  ✅ message.meta 为 null
+  ✅ message.createdAt 是数字
+  ✅ message.readAt 初始为 null
+  ✅ 重发同一 clientId 返回 200
+  ✅ 重发返回的是同一条消息（幂等）
+  ✅ B 拉取消息返回 200
+  ✅ clientId 幂等：列表中只有一条该消息
+  ✅ B 能拉到 A 发的消息
+  ✅ 消息列表含 hasMore
+  ✅ 消息按 createdAt 升序返回
+  ✅ body 超过 2000 字符被拒绝（400）
+  ✅ 未绑定情侣的用户发消息返回 403 forbidden
+  ✅ A 发送第二条消息返回 200
+  ✅ B 在 2 秒内通过 WebSocket 收到 {type:"message"}
+  ✅ WS 推送的 message.body 正确
+  ✅ WS 推送的 message.senderId 为 A
+  ✅ POST /api/chat/read 返回 200
+  ✅ read 响应 ok 为 true
+  ✅ read 响应 count 为正数（标记了对方消息）
+  ✅ 消息的 readAt 已被标记
+  ✅ read 事件格式正确（不回推给自己）
+  ✅ WebSocket ping 收到 pong 响应
+  ✅ pong 含 serverTime
+  ✅ A 上报已读返回 200
+  ✅ 对方上报已读后 B 收到 {type:"read"}
+  ✅ read 事件含 upTo
+  ✅ "typing" 事件被服务端正常处理（无错误响应）
+  ✅ A 撤回自己的消息返回 200
+  ✅ B 撤回 A 的消息被拒绝（403）
+
+5. 表情包（含真实 PNG 上传与 magic bytes 校验）
+  ✅ 本地生成的 8x8 PNG 结构合法
+  ✅ PNG 体积合理
+  ✅ 创建表情包返回 200
+  ✅ pack.id 使用 p_ 前缀
+  ✅ pack.name 正确
+  ✅ pack.ownerId 为 A
+  ✅ pack.isPublic 为 false
+  ✅ 新包 items 为空
+  ✅ 上传 PNG 表情返回 200
+  ✅ item.id 使用 e_ 前缀
+  ✅ item.id 满足 ^e_[A-Za-z0-9]+$ 格式
+  ✅ item.mime 为 image/png
+  ✅ item.size 与实际字节数一致
+  ✅ item.name 正确
+  ✅ item.packId 正确
+  ✅ item.ownerId 为 A
+  ✅ item.url 形如 /api/emoji/blob/e_xxx
+  ✅ B 拉取表情包列表返回 200
+  ✅ B 能看到 A 创建的表情包（同情侣空间可见）
+  ✅ 列表中含刚上传的表情
+  ✅ GET /api/emoji/blob/:id?token= 返回 200
+  ✅ blob Content-Type 为 image/png
+  ✅ blob Cache-Control 符合 API.md 要求
+  ✅ blob 返回的字节数与上传一致
+  ✅ blob 返回的内容与上传的 PNG 完全一致
+  ✅ blob 内容是合法 PNG
+  ✅ blob 支持 Authorization 头鉴权
+  ✅ blob 无凭证返回 401
+  ✅ 伪造 mime 的非图片数据被拒绝（400 invalid_input）
+  ✅ HTML 内容伪装 PNG 被拒绝（400）
+  ✅ 声明 mime 与实际格式不符被拒绝（400）
+  ✅ 非白名单 mime 被拒绝（400）
+  ✅ 路径穿越尝试被拒绝（400/404）
+  ✅ 带 e_ 前缀的穿越尝试被拒绝（400/404）
+  ✅ 为删除用例再上传一张表情成功
+  ✅ 待删除表情 id 格式合法
+  ✅ 删除前该表情出现在 GET /api/emoji/packs 列表里
+  ✅ 删除前 blob 可正常下载（200）
+  ✅ B 删除 A 上传的表情返回 403 forbidden
+  ✅ 删除不存在的 id 返回 404 not_found
+  ✅ 非法 id "../etc/passwd" 返回 400 invalid_input
+  ✅ 非法 id "e_/../../db" 返回 400 invalid_input
+  ✅ 非法 id "notanid" 返回 400 invalid_input
+  ✅ 非法 id "e_" 返回 400 invalid_input
+  ✅ 非法 id "p_abc" 返回 400 invalid_input
+  ✅ 未鉴权删除表情返回 401
+  ✅ A 删除自己上传的表情返回 200
+  ✅ 删除响应 ok 为 true
+  ✅ 删除响应含 serverTime
+  ✅ 删除后该表情不再出现在 GET /api/emoji/packs 列表里
+  ✅ 同一包内其它表情不受影响
+  ✅ 删除后 GET /api/emoji/blob/:id 返回 404
+  ✅ 已删除的 id 再删一次返回 404 not_found
+  ✅ 删除自己的表情包返回 200
+  ✅ 删除包后其表情文件不可访问（404）
+
+6. 后台管理 /admin/api/*
+  ✅ 错误密码登录失败（401 unauthorized）
+  ✅ 空密码登录失败（401）
+  ✅ 正确密码登录成功（200）
+  ✅ 登录响应含 admin token
+  ✅ 未鉴权访问 /admin/api/settings 返回 401
+  ✅ 用户 token 无法访问后台接口（不同 secret）
+  ✅ GET /admin/api/settings 返回 200
+  ✅ settings 含 deepseekApiKeyMasked 字段
+  ✅ settings 不返回 deepseekApiKey 明文字段
+  ✅ 默认 deepseekBaseUrl 正确
+  ✅ 默认 deepseekModel 为 deepseek-chat
+  ✅ 默认 aiEnabled 为 true
+  ✅ 默认 aiDailyLimit 为 200
+  ✅ 默认 registerOpen 为 true
+  ✅ 默认 maxEmojiPacks 为 30
+  ✅ 默认 maxMessagesPerDay 为 3000
+  ✅ PUT /admin/api/settings 返回 200
+  ✅ 写入后 deepseekApiKeyMasked 非空
+  ✅ 掩码中不含明文 Key
+  ✅ 掩码中含星号
+  ✅ 掩码保留 sk- 前缀
+  ✅ 掩码保留末 4 位
+  ✅ 整个 settings 响应体中不含明文 Key
+  ✅ deepseekModel 已更新
+  ✅ aiDailyLimit 已更新
+  ✅ 数据库中不存在明文 Key（已加密存储）
+  ✅ 清空 deepseekApiKey 返回 200
+  ✅ 清空后掩码为空字符串
+  ✅ GET /admin/api/stats 返回 200
+  ✅ stats.users 是数字
+  ✅ stats.couples 是数字
+  ✅ stats.messages 是数字
+  ✅ stats.aiToday 是数字
+  ✅ stats.disk.totalBytes 是数字
+  ✅ stats.users 统计到已注册用户
+  ✅ GET /admin/api/users 返回 200
+  ✅ 用户列表非空
+  ✅ 用户列表含 total
+  ✅ 用户列表含用户 A
+  ✅ 用户列表不含密码哈希
+  ✅ 用户搜索返回 200
+  ✅ 搜索结果含目标用户
+  ✅ 重置用户密码返回 200
+  ✅ 重置后可用新密码登录
+  ✅ 重置后旧密码无法登录（401）
+  ✅ 禁用用户返回 200
+  ✅ 被禁用用户登录返回 403 forbidden
+  ✅ 启用用户返回 200
+  ✅ 启用后可正常登录
+  ✅ GET /admin/api/packs 返回 200
+  ✅ packs.totalPacks 是数字
+  ✅ packs.totalItems 是数字
+  ✅ GET /admin/api/logs 返回 200
+  ✅ 操作日志非空
+  ✅ 日志记录了后台登录成功
+  ✅ 日志记录了后台登录失败
+  ✅ 日志记录了设置修改
+  ✅ 日志记录了重置密码
+  ✅ 日志记录了禁用/启用
+  ✅ 删除用户返回 200
+  ✅ 删除后用户列表中不再出现
+  ✅ GET /admin 返回 200
+  ✅ GET /admin 返回 HTML
+  ✅ 后台页面含中文标题
+
+7. AI 接口（未配置真实 Key 时的行为）
+  ✅ GET /api/ai/status 返回 200
+  ✅ ai/status.enabled 是布尔值
+  ✅ ai/status.configured 为 true（已写入 Key）
+  ✅ ai/status.model 是字符串
+  ✅ ai/status.dailyLimit 是数字
+  ✅ ai/status.usedToday 是数字
+  ✅ AI 接口在 Key 无效时返回受控错误（非 500）
+  ✅ AI 错误响应含 error 字段
+  ✅ AI 接口未鉴权返回 401
+
+8. 通用约定校验
+  ✅ 未知接口返回 404
+  ✅ 404 响应 error 为 not_found
+  ✅ 404 响应含 message
+  ✅ 非法 JSON 请求体返回 400
+  ✅ 无 token 访问 /api/auth/me 返回 401 unauthorized
+  ✅ PATCH /api/auth/me 返回 200
+  ✅ 昵称已更新
+  ✅ POST /api/auth/password 返回 200
+  ✅ 原密码错误返回 401
+  ✅ PATCH /api/couple 返回 200
+  ✅ togetherDate 已更新
+  ✅ anniversaryTitle 已更新
+  ✅ GET /api/auth/me 响应含 serverTime
+  ✅ auth/me 返回正确的用户
+  ✅ auth/me 返回情侣空间
+  ✅ POST /api/couple/leave 返回 200
+  ✅ 解绑后 coupleId 置空
+  ✅ 解绑后 couple 为 null
+
+----------------------------------------
+清理：停止服务进程并删除测试数据目录
+数据目录已清理：./data-test
+
+========================================
+  ✅ ALL TESTS PASSED  通过 256 项断言
+========================================
+
