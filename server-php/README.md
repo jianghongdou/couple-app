@@ -48,7 +48,7 @@ server-php/
 │   └── util/              Ids（id 生成）/ Validate（参数校验）/ Image（magic bytes）
 ├── bin/
 │   ├── ws-server.php      WebSocket 常驻进程
-│   └── console.php        命令行工具（自检 / 建表 / 同步表情 / 清理 / 本地起服务）
+│   └── console.php        命令行工具（自检 / 建表 / 重置后台密码 / 同步表情 / 清理 / 本地起服务）
 ├── data/                  运行时生成：表情文件 + 日志 + WS 状态（数据库在 MySQL 里）
 └── test/
     ├── smoke.php          端到端测试（php test/smoke.php）
@@ -292,7 +292,7 @@ DSN 形如：`mysql:host=127.0.0.1;port=3306;dbname=couple;charset=utf8mb4`
 | `messages` | 聊天消息（幂等 client_id、已读、撤回） |
 | `emoji_packs` / `emoji_items` | 表情包与表情元数据（图片本体在 `data/emoji/`） |
 | `sync_objects` | 通用同步对象（火花/宠物/签到/愿望/加班/设置） |
-| `settings` | 服务端键值设置（含 `schema_version`） |
+| `settings` | 服务端键值设置（含 `schema_version`、后台密码哈希 `adminPasswordHash`） |
 | `ai_usage` | AI 调用计数 |
 | `admin_logs` | 后台操作日志 |
 | `rate_limits` | 限流计数（内部表） |
@@ -320,7 +320,7 @@ DSN 形如：`mysql:host=127.0.0.1;port=3306;dbname=couple;charset=utf8mb4`
 
 ## 6. 后台管理
 
-登录地址：`https://你的域名/admin.php`，密码 = 安装时设置的后台密码。
+登录地址：`https://你的域名/admin.php`，密码 = 安装时设置的后台密码（或你在后台自助改过的新密码）。
 
 功能与 Node 版一致：
 
@@ -331,11 +331,63 @@ DSN 形如：`mysql:host=127.0.0.1;port=3306;dbname=couple;charset=utf8mb4`
 | 应用设置 | 注册开关、公告、最低/最新版本号、更新地址、表情包上限、每日消息上限 |
 | 用户管理 | 搜索、分页、重置密码、禁用/启用、删除 |
 | 表情统计 | 包数 / 表情数 / 文件数 / 占用，以及各项限制 |
-| 操作日志 | 后台所有写操作（登录、改设置、重置密码、禁用、删除、AI 测试） |
+| **安全** | 后台密码来源 + **自助修改后台密码**（当前密码 / 新密码 / 确认新密码） |
+| 操作日志 | 后台所有写操作（登录、改设置、重置密码、改后台密码、禁用、删除、AI 测试） |
 
 「服务器信息」区块显示：PHP 版本、平台、运行方式、运行时长、内存、**数据库类型与版本**、
 **数据库连接状态**、字符集、表结构版本、数据目录、时区、JWT 密钥是否配置、
-后台密码是否配置、WebSocket 是否运行（数据来自 `GET /admin/api/system`，字段只增不改）。
+后台密码是否配置**及其来源**、WebSocket 是否运行（数据来自 `GET /admin/api/system`，字段只增不改）。
+
+### 6.1 后台密码存哪里、怎么改、忘了怎么办
+
+**存哪里**
+
+- 后台密码以 **bcrypt 哈希**（`password_hash($p, PASSWORD_BCRYPT)`，cost 与用户密码一致）保存在
+  数据库 `settings` 表的 `adminPasswordHash` 键里。
+- `config.php` 的 `admin_password` 降级为**初始密码 / 兜底密码**：
+  - 数据库里**没有** `adminPasswordHash` 时 → 按 `config.php` 的明文校验；
+    **第一次登录成功后立刻自动把哈希写入数据库**（自动迁移），之后即在后台自助改密码。
+  - 数据库里**有** `adminPasswordHash` 时 → 只认数据库里的哈希，
+    `config.php` 里的旧密码**立即失效**（改过就是改掉了，不留后门）。
+- **哈希和明文永远不会返回给任何接口**：`GET /admin/api/settings`、`/api/meta`、
+  `GET /admin/api/system` 只返回布尔/枚举值 `adminPasswordInDatabase`（true/false）、
+  `adminPasswordSource`（`"database"` / `"config"`）；`Settings::readAll()` 也不携带哈希。
+- 日志（`admin_logs` / `data/logs/app.log`）只记「成功 / 失败 / 当前密码错误」等动作，**不记密码**。
+
+**怎么改（后台自助）**
+
+1. 登录 `/admin.php` → 「安全」区块。
+2. 填「当前密码 / 新密码 / 确认新密码」→ 点「修改后台密码」。
+3. 校验规则：当前密码错误 → `401 unauthorized`；新密码不在 6-64 位 → `400 invalid_input`；
+   新密码与当前密码相同 → `400`（中文提示）。成功后返回 `{"ok":true,...}`，
+   **当前 admin token 继续有效**（不会把自己踢出登录），已签发的其它 token 也不受影响。
+4. 该接口有独立限流（同一 IP 15 分钟最多 10 次），防止用暴力方式猜「当前密码」。
+
+对应接口：`POST /admin/api/admin-password`，body `{ "currentPassword": "...", "newPassword": "..." }`
+（需要 `Authorization: Bearer <admin token>`；这是后台专用接口，不影响 iOS App 的接口契约）。
+
+**忘了密码怎么办（救援路径）**
+
+```bash
+# 方式 1（推荐）：命令行直接重置，写入新的 bcrypt 哈希
+php bin/console.php set-admin-password 新密码
+php bin/console.php set-admin-password      # 不带密码则交互式输入两遍（Linux 下输入不回显）
+
+# 方式 2：回到 config.php 里的初始密码
+#   删除 settings 表里的 adminPasswordHash 记录，例如：
+mysql -u couple -p couple -e "DELETE FROM settings WHERE \`key\`='adminPasswordHash';"
+#   之后再用 config.php 里的 admin_password 登录一次，会自动重新迁入数据库。
+
+# 方式 3：删掉 config.php 重装（会生成新的 jwt_secret，已签发 token 失效）
+```
+
+查看当前密码来源：
+
+```bash
+php bin/console.php check
+#   … 后台密码来源： 数据库        （或 config.php）
+```
+
 
 安全说明：
 
@@ -343,6 +395,9 @@ DSN 形如：`mysql:host=127.0.0.1;port=3306;dbname=couple;charset=utf8mb4`
   数据库被拿走也看不到明文；后台接口只返回掩码（如 `sk-********abcd`）。
 - 用户 token 与后台 token 使用**不同密钥**（`jwt_secret` / `admin_jwt_secret`），互不通用。
 - 用户 token 有效期 30 天；后台 token 12 小时。
+- **后台密码**以 bcrypt 哈希存数据库（`settings.adminPasswordHash`），可在后台「安全」区块自助修改；
+  接口只返回来源标记（`adminPasswordInDatabase` / `adminPasswordSource`），从不回显哈希或明文；
+  修改密码有独立限流，且不会让已签发的 admin token 失效（见 6.1）。
 - 安装向导：CSRF token（session）校验；数据库密码不回显；已安装后一律 403。
 
 ---
@@ -350,8 +405,9 @@ DSN 形如：`mysql:host=127.0.0.1;port=3306;dbname=couple;charset=utf8mb4`
 ## 7. 日常维护命令
 
 ```bash
-php bin/console.php check              # 配置/数据库版本/连接状态/WS 状态自检
+php bin/console.php check              # 配置/数据库版本/连接状态/后台密码来源/WS 状态自检
 php bin/console.php init-db            # 建表 + 默认设置（幂等，可重复执行）
+php bin/console.php set-admin-password 新密码   # 重置后台密码（写数据库 bcrypt 哈希；不带参数则交互输入）
 php bin/console.php stats              # 打印统计
 php bin/console.php sync-public-emoji  # 同步 public/emoji 下的内置公共表情包
 php bin/console.php purge              # 清理解绑 30 天以上的情侣数据 + 过期限流记录
@@ -373,6 +429,7 @@ php bin/console.php gen-secret         # 生成随机密钥
 | 实时推送 | 与 REST 同进程直接广播 | REST 写 `ws_events` 队列 → `bin/ws-server.php` 轮询广播（≤300ms 延迟） |
 | WebSocket | `ws` 库 | 纯 PHP `stream_socket_server` + `stream_select` + 手写帧编解码 |
 | 密码 | bcryptjs 10 轮 | `password_hash(PASSWORD_BCRYPT, cost=10)` |
+| 后台密码 | 只读 config.php | **存数据库 `settings.adminPasswordHash`（bcrypt）**，后台页面可自助修改；`config.php` 的 `admin_password` 仅作初始/兜底密码，首次登录自动迁入数据库 |
 | JWT | jsonwebtoken 库 | 手写 HS256 |
 | 内部表 | — | 额外两张内部表：`rate_limits`、`ws_events`（不对外暴露） |
 
@@ -402,6 +459,17 @@ A：`chown -R www:www /www/wwwroot/你的站点/server-php`，或者按页面给
 A：删除 `server-php/config.php`，再打开 `/install.php` 重新填。注意重装会生成新的
 `jwt_secret`，已签发的用户 token 会失效（客户端重新登录即可），已加密的 DeepSeek Key
 需要重新在后台填一次。
+
+**Q：忘了后台管理密码怎么办？**
+A：三种办法（详见 6.1）：
+① `php bin/console.php set-admin-password 新密码`（直接写数据库哈希，最省事）；
+② 删除 `settings` 表里的 `adminPasswordHash` 记录，回到 `config.php` 里的初始密码
+（再登录一次会自动迁入数据库）；
+③ 删除 `config.php` 重装。
+
+**Q：后台密码改了之后，`config.php` 里的旧密码还能用吗？**
+A：不能。数据库里一旦有 `adminPasswordHash`，就只认它 —— 这正是「改了就要真的失效」。
+想回到 `config.php` 的密码只能删掉该哈希（见上一条）。
 
 **Q：后台能登录但保存设置报 500？**
 A：`data/` 目录不可写。按 2.2 授权后重试；`data/logs/app.log` 里有具体原因。

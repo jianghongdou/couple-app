@@ -231,6 +231,7 @@ td.actions{display:flex;gap:6px;flex-wrap:wrap}
       <button data-tab="app">应用设置</button>
       <button data-tab="users">用户管理</button>
       <button data-tab="emoji">表情统计</button>
+      <button data-tab="security">安全</button>
       <button data-tab="logs">操作日志</button>
     </nav>
 
@@ -405,6 +406,59 @@ td.actions{display:flex;gap:6px;flex-wrap:wrap}
       </div>
     </section>
 
+    <!-- ============ 安全 ============ -->
+    <section data-panel="security" class="hidden">
+      <div class="card">
+        <h2>后台管理密码</h2>
+        <div class="hint">
+          后台密码以 <b>bcrypt 哈希</b>保存在服务端数据库（<span class="mono">settings.adminPasswordHash</span>），
+          任何接口都不会返回哈希或明文；修改密码后当前登录仍然有效。
+        </div>
+
+        <div class="form-row">
+          <label>当前密码来源</label>
+          <div class="control">
+            <span class="mono" id="adminPwdSource">加载中…</span>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <label for="curPwd">当前密码</label>
+          <div class="control">
+            <input type="password" id="curPwd" placeholder="请输入当前后台密码" autocomplete="current-password">
+          </div>
+        </div>
+
+        <div class="form-row">
+          <label for="newPwd">新密码</label>
+          <div class="control">
+            <input type="password" id="newPwd" placeholder="6-64 位" autocomplete="new-password">
+            <span class="hint">长度 6-64 位，且不能与当前密码相同</span>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <label for="newPwd2">确认新密码</label>
+          <div class="control">
+            <input type="password" id="newPwd2" placeholder="再输入一遍新密码" autocomplete="new-password">
+          </div>
+        </div>
+
+        <div class="row" style="margin-top:16px">
+          <button class="btn btn-primary" type="button" id="savePwdBtn">修改后台密码</button>
+        </div>
+        <div class="hint" id="pwdMsg" style="margin-top:10px;min-height:18px"></div>
+
+        <div class="hint" style="margin-top:14px;border-top:1px dashed rgba(42,50,61,.7);padding-top:12px">
+          <b>忘记密码了怎么办？</b><br>
+          ① 在服务器上执行 <span class="mono">php bin/console.php set-admin-password 新密码</span>（不带密码则交互式输入，输入不回显）；<br>
+          ② 或删除数据库 <span class="mono">settings</span> 表里的 <span class="mono">adminPasswordHash</span>，
+          回到 <span class="mono">config.php</span> 里的初始密码（再登录一次会自动迁入数据库）；<br>
+          ③ 也可以用 <span class="mono">php bin/console.php check</span> 查看当前密码来源。
+        </div>
+      </div>
+    </section>
+
     <!-- ============ 操作日志 ============ -->
     <section data-panel="logs" class="hidden">
       <div class="card">
@@ -473,7 +527,8 @@ td.actions{display:flex;gap:6px;flex-wrap:wrap}
       body: options.body ? JSON.stringify(options.body) : undefined,
     }).then(function (res) {
       return res.json().catch(function () { return {}; }).then(function (data) {
-        if (res.status === 401) {
+        // keepSession：允许接口自己返回 401（例如「当前密码错误」）而不触发退出登录
+        if (res.status === 401 && !options.keepSession) {
           logout(true);
           throw new Error(data.message || '登录已过期');
         }
@@ -589,7 +644,9 @@ td.actions{display:flex;gap:6px;flex-wrap:wrap}
         '数据目录 <span class="mono">' + esc(s.env.dataDir) + '</span> · ' +
         '时区 <span class="mono">' + esc(s.timezone || '-') + '</span> · ' +
         'JWT 密钥 <span class="mono">' + (s.jwtSecretConfigured ? '已配置' : '未配置') + '</span> · ' +
-        '后台密码 <span class="mono">' + (s.adminPasswordConfigured ? '已配置' : '未配置') + '</span><br>' +
+        '后台密码 <span class="mono">' + (s.adminPasswordConfigured ? '已配置' : '未配置')
+          + (s.adminPasswordSource ? '（' + (s.adminPasswordSource === 'database' ? '数据库' : 'config.php') + '）' : '')
+          + '</span><br>' +
         'WebSocket <span class="mono">' + (s.wsRunning ? ('运行中（在线 ' + s.wsOnline + '）') : '未运行') + '</span>';
     }).catch(function () { $('sysInfo').textContent = '无法获取系统信息'; });
   }
@@ -600,6 +657,10 @@ td.actions{display:flex;gap:6px;flex-wrap:wrap}
       ? '当前 Key：' + s.deepseekApiKeyMasked + '（已配置）'
       : '尚未配置 API Key，AI 功能不可用';
     $('dsKey').value = '';
+
+    $('adminPwdSource').textContent = s.adminPasswordSource === 'database'
+      ? '数据库（可在此修改）'
+      : 'config.php（首次登录后自动迁入数据库）';
 
     var model = s.deepseekModel || 'deepseek-chat';
     if (model === 'deepseek-chat' || model === 'deepseek-reasoner') {
@@ -696,6 +757,43 @@ td.actions{display:flex;gap:6px;flex-wrap:wrap}
     }).catch(function (err) {
       $('testResult').textContent = '❌ 测试失败：' + err.message;
       toast(err.message, 'err');
+    })['finally'](function () { btn.disabled = false; });
+  });
+
+  // ---------- 安全：修改后台管理密码 ----------
+  $('savePwdBtn').addEventListener('click', function () {
+    var msg = $('pwdMsg');
+    var cur = $('curPwd').value;
+    var np = $('newPwd').value;
+    var np2 = $('newPwd2').value;
+    msg.style.color = 'var(--text-dim)';
+
+    if (!cur) { msg.style.color = 'var(--red)'; msg.textContent = '请输入当前密码'; return; }
+    if (np.length < 6 || np.length > 64) {
+      msg.style.color = 'var(--red)'; msg.textContent = '新密码长度需为 6-64 位'; return;
+    }
+    if (np !== np2) { msg.style.color = 'var(--red)'; msg.textContent = '两次输入的新密码不一致'; return; }
+    if (np === cur) { msg.style.color = 'var(--red)'; msg.textContent = '新密码不能与当前密码相同'; return; }
+
+    var btn = this;
+    btn.disabled = true;
+    msg.textContent = '正在提交…';
+
+    api('/admin-password', {
+      method: 'POST',
+      keepSession: true,
+      body: { currentPassword: cur, newPassword: np },
+    }).then(function (r) {
+      msg.style.color = 'var(--green)';
+      msg.textContent = '✅ ' + ((r && r.message) ? r.message : '后台密码已修改');
+      $('curPwd').value = '';
+      $('newPwd').value = '';
+      $('newPwd2').value = '';
+      toast('后台密码已修改', 'ok');
+      return loadSettings();
+    }).catch(function (err) {
+      msg.style.color = 'var(--red)';
+      msg.textContent = '❌ ' + err.message;
     })['finally'](function () { btn.disabled = false; });
   });
 

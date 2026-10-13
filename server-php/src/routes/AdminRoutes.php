@@ -97,6 +97,47 @@ class AdminRoutes
             Http::ok(['ok' => true, 'settings' => $settings]);
         });
 
+        // POST /admin/api/admin-password —— 后台自助修改密码（API.md 之外的后台专用接口）
+        //
+        // 密码存 settings.adminPasswordHash（bcrypt），任何响应都不回显哈希/明文。
+        // 改密码**不会**让已签发的 admin token 失效（避免用户把自己踢出去）。
+        $r->post('/admin/api/admin-password', function () use ($admin) {
+            $admin();
+            // 防止用暴力方式猜测「当前密码」：同一 IP 15 分钟最多 10 次
+            RateLimit::enforce('adminpwd:' . Http::clientIp(), 10, 900000, '密码修改尝试过于频繁，请稍后再试');
+
+            $body = Http::jsonBody();
+            $currentPassword = Validate::requireString(Http::field($body, 'currentPassword'), 'currentPassword', [
+                'min' => 1, 'max' => Config::limit('PASSWORD_MAX'),
+            ]);
+            $newPassword = Validate::requireString(Http::field($body, 'newPassword'), 'newPassword', [
+                'min' => Config::limit('PASSWORD_MIN'), 'max' => Config::limit('PASSWORD_MAX'),
+            ]);
+
+            // 当前密码不对 → 401（与登录失败同样的错误码风格），并记日志
+            if (!Auth::verifyAdminPassword($currentPassword)) {
+                Auth::logAdminAction('admin.password.change_failed', '当前密码错误');
+                Log::warn('后台修改密码失败：当前密码错误', ['ip' => Http::clientIp()]);
+                throw new HttpException(401, 'unauthorized', '当前密码错误');
+            }
+
+            if ($newPassword === $currentPassword) {
+                Auth::logAdminAction('admin.password.change_failed', '新密码与当前密码相同');
+                Validate::fail('新密码不能与当前密码相同');
+            }
+
+            Settings::setAdminPasswordHash(Auth::hashAdminPassword($newPassword));
+            Auth::logAdminAction('admin.password.changed', '后台密码已修改（bcrypt 哈希存入数据库）');
+            Log::info('后台密码已修改', ['ip' => Http::clientIp()]);
+
+            Http::ok([
+                'ok' => true,
+                'message' => '后台密码已修改，当前登录仍然有效',
+                'adminPasswordInDatabase' => true,
+                'adminPasswordSource' => 'database',
+            ]);
+        });
+
         // POST /admin/api/ai/test —— 用当前（或临时传入的）Key 试跑一条文本
         $r->post('/admin/api/ai/test', function () use ($admin) {
             $admin();
@@ -346,7 +387,11 @@ class AdminRoutes
                 ],
                 'timezone' => date_default_timezone_get(),
                 'jwtSecretConfigured' => (string) Config::get('jwt_secret', '') !== '',
-                'adminPasswordConfigured' => (string) Config::get('admin_password', '') !== '',
+                'adminPasswordConfigured' => Settings::adminPasswordInDatabase()
+                    || (string) Config::get('admin_password', '') !== '',
+                // 后台密码只暴露来源，绝不返回哈希/明文
+                'adminPasswordInDatabase' => Settings::adminPasswordInDatabase(),
+                'adminPasswordSource' => Settings::adminPasswordSource(),
                 'installed' => Installer::isConfigured(),
                 'configFile' => Config::configFile(),
             ]);

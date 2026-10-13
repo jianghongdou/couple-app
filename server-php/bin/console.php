@@ -5,6 +5,8 @@
  *   php bin/console.php check                 配置自检 + 数据库连接/版本（不启动服务）
  *   php bin/console.php gen-secret            生成随机密钥
  *   php bin/console.php init-db               建表 + 写入默认设置（幂等，可重复执行）
+ *   php bin/console.php set-admin-password [新密码]
+ *                                             重置后台管理密码（写数据库 bcrypt 哈希）
  *   php bin/console.php sync-public-emoji     同步 public/emoji 下的内置公共表情包
  *   php bin/console.php purge                 清理过期数据（解绑 30 天以上 + 限流记录）
  *   php bin/console.php serve [--port=8787]   用 PHP 内置服务器跑 REST（仅供本地调试）
@@ -17,6 +19,32 @@ require __DIR__ . '/../src/Bootstrap.php';
 
 // 只注册自动加载器（不连数据库），下面几个命令不需要数据库
 App\Bootstrap::registerAutoloader();
+
+/**
+ * 读取一行输入（能关回显就关掉）。
+ * Linux/macOS 用 stty -echo 不回显；Windows 下没有可移植方案，退化为普通输入
+ * （只影响本地调试观感，不影响安全性：密码同样不会写进任何日志）。
+ */
+function readHiddenLine($prompt)
+{
+    fwrite(STDOUT, $prompt);
+    $hidden = false;
+    $saved = '';
+    if (stripos(PHP_OS, 'WIN') !== 0 && function_exists('shell_exec')) {
+        $saved = (string) @shell_exec('stty -g 2>/dev/null');
+        if (trim($saved) !== '') {
+            @shell_exec('stty -echo 2>/dev/null');
+            $hidden = true;
+        }
+    }
+    $line = fgets(STDIN);
+    if ($hidden) {
+        @shell_exec('stty ' . escapeshellarg(trim($saved)) . ' 2>/dev/null');
+        @shell_exec('stty echo 2>/dev/null');
+    }
+    fwrite(STDOUT, "\n");
+    return $line === false ? '' : rtrim($line, "\r\n");
+}
 
 $argvAll = isset($argv) ? $argv : [];
 $command = isset($argvAll[1]) ? $argvAll[1] : 'help';
@@ -53,6 +81,7 @@ if ($command === 'help' || $command === '--help' || $command === '-h') {
     echo "  php bin/console.php check                 配置自检 + 数据库连接/版本\n";
     echo "  php bin/console.php gen-secret            生成随机密钥\n";
     echo "  php bin/console.php init-db               建表 + 写入默认设置\n";
+    echo "  php bin/console.php set-admin-password    重置后台管理密码（不带密码则交互输入）\n";
     echo "  php bin/console.php sync-public-emoji     同步内置公共表情包\n";
     echo "  php bin/console.php purge                 清理过期数据\n";
     echo "  php bin/console.php stats                 打印统计信息\n";
@@ -89,7 +118,11 @@ if ($command === 'check') {
     echo "   连接状态： 正常（SELECT 1 通过）\n";
     echo "   表情目录： " . App\Config::emojiDir() . "\n";
     echo "   时区：     " . date_default_timezone_get() . "\n";
-    echo "   后台密码： 已配置（长度 " . strlen((string) App\Config::get('admin_password')) . "）\n";
+    $adminPwdSource = App\Settings::adminPasswordSource();
+    echo "   后台密码： " . ($adminPwdSource === 'database'
+        ? '已配置（bcrypt 哈希存于数据库，可在后台「安全」区块自助修改）'
+        : '已配置（来自 config.php，首次登录成功后自动迁入数据库）') . "\n";
+    echo "   后台密码来源： " . ($adminPwdSource === 'database' ? '数据库' : 'config.php') . "\n";
     echo "   JWT 密钥： 已配置（长度 " . strlen((string) App\Config::get('jwt_secret')) . "）\n";
     echo "   数据库可读： " . (App\Db::pingDb() ? '是' : '否') . "\n";
     echo "   DeepSeek Key： " . (App\Settings::isAiConfigured() ? '已配置' : '未配置') . "\n";
@@ -105,6 +138,33 @@ if ($command === 'init-db') {
     echo "✅ 数据库已初始化（幂等，可重复执行）\n";
     echo "   " . App\Db::serverEngine() . ' ' . App\Db::serverVersion() . ' · ' . App\Config::dbLabel() . "\n";
     echo "   表结构版本：" . App\Config::SCHEMA_VERSION . "\n";
+    exit(0);
+}
+
+if ($command === 'set-admin-password') {
+    $plain = isset($argvAll[2]) ? (string) $argvAll[2] : '';
+    if ($plain === '') {
+        echo "重置后台管理密码（直接写入数据库 bcrypt 哈希）\n";
+        echo "提示：也可以删除 settings 表中的 adminPasswordHash 回到 config.php 的初始密码。\n\n";
+        $plain = readHiddenLine('请输入新的后台管理密码：');
+        $again = readHiddenLine('请再输入一遍确认：');
+        if ($plain !== $again) {
+            fwrite(STDERR, "❌ 两次输入的密码不一致，未做任何修改。\n");
+            exit(1);
+        }
+    }
+    $min = App\Config::limit('PASSWORD_MIN');
+    $max = App\Config::limit('PASSWORD_MAX');
+    $len = mb_strlen($plain, 'UTF-8');
+    if ($len < $min || $len > $max) {
+        fwrite(STDERR, "❌ 密码长度必须在 {$min}-{$max} 位之间（当前 {$len} 位），未做任何修改。\n");
+        exit(1);
+    }
+    App\Settings::setAdminPasswordHash(App\Auth::hashAdminPassword($plain));
+    App\Auth::logAdminAction('admin.password.reset_cli', '命令行重置后台密码');
+    echo "✅ 后台管理密码已重置（bcrypt 哈希已写入数据库 settings.adminPasswordHash）\n";
+    echo "   请立刻用新密码登录后台；本次重置不会让已签发的后台 token 失效。\n";
+    echo "   想改回 config.php 里的初始密码：删除 settings 表的 adminPasswordHash 记录即可。\n";
     exit(0);
 }
 

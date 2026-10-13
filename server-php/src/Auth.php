@@ -81,12 +81,62 @@ class Auth
         return hash_equals($ha, $hb);
     }
 
+    /** 后台密码的 bcrypt cost（与用户密码保持一致） */
+    const BCRYPT_COST = 10;
+
+    /** 生成后台密码哈希（bcrypt） */
+    public static function hashAdminPassword($password)
+    {
+        return password_hash((string) $password, PASSWORD_BCRYPT, ['cost' => self::BCRYPT_COST]);
+    }
+
+    /**
+     * 校验后台管理员密码。
+     *
+     *   1) 数据库里**有** settings.adminPasswordHash → 只认它（password_verify）。
+     *      此时 config.php 里的旧密码立即失效（改过密码就是真的改掉了，不留后门）。
+     *   2) 数据库里**没有**哈希 → 按老逻辑与 config.php 的明文做常数时间比较；
+     *      一旦验证成功，立刻把该密码哈希写入数据库（自动迁移），
+     *      用户无需任何额外操作就能开始用「后台自助改密码」。
+     *
+     * @param mixed $password
+     * @return bool
+     */
     public static function verifyAdminPassword($password)
     {
         if (!is_string($password) || $password === '') {
             return false;
         }
-        return self::timingSafeCompare($password, (string) Config::get('admin_password', ''));
+
+        $hash = Settings::adminPasswordHash();
+        if ($hash !== '') {
+            return password_verify($password, $hash);
+        }
+
+        $configPassword = (string) Config::get('admin_password', '');
+        if ($configPassword === '' || !self::timingSafeCompare($password, $configPassword)) {
+            return false;
+        }
+
+        // config.php 的初始密码校验通过 → 自动迁入数据库（失败也不影响本次登录）
+        self::migrateAdminPasswordToDatabase($password);
+        return true;
+    }
+
+    /**
+     * 把明文后台密码哈希后写入数据库（首次迁移 / 重置）。
+     * 任何失败都只记日志，不抛出：调用方（登录、改密码校验）不应因此失败。
+     */
+    public static function migrateAdminPasswordToDatabase($password)
+    {
+        try {
+            Settings::setAdminPasswordHash(self::hashAdminPassword($password));
+            Log::info('后台密码已自动迁入数据库（config.php 中的密码作为初始密码）');
+            return true;
+        } catch (\Exception $e) {
+            Log::warn('后台密码自动迁入数据库失败（本次仍按 config.php 校验）', ['error' => $e->getMessage()]);
+            return false;
+        }
     }
 
     public static function signAdminToken()

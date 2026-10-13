@@ -9,11 +9,23 @@ namespace App;
  *      即使数据库文件泄漏也不会直接暴露明文 Key。
  *   2. 对外（后台接口）一律只返回掩码，绝不返回明文。
  *   3. 明文 Key 仅存在于服务端内存与 settings 表的加密值中。
+ *   4. 后台管理员密码以 bcrypt 哈希存在 settings.adminPasswordHash，
+ *      任何接口都不会返回该哈希（连 readAll() 都不带它），只暴露
+ *      adminPasswordInDatabase / adminPasswordSource 两个布尔/枚举值。
  */
 class Settings
 {
     /** 加密标记前缀，便于识别历史明文值（兼容旧数据） */
     const ENC_PREFIX = 'enc:v1:';
+
+    /** 后台管理员密码哈希在 settings 表中的键 */
+    const ADMIN_PASSWORD_HASH_KEY = 'adminPasswordHash';
+
+    /**
+     * 绝不进入 Settings::readAll() 的敏感键（避免被 ReadAll 的调用方整体回吐）。
+     * 需要时用 adminPasswordHash() 单独读取。
+     */
+    const INTERNAL_KEYS = ['adminPasswordHash'];
 
     /** @var array|null 请求内缓存 */
     private static $cache = null;
@@ -118,6 +130,9 @@ class Settings
         $raw = Db::getAllSettings();
         $out = Config::DEFAULTS;
         foreach ($raw as $k => $v) {
+            if (in_array($k, self::INTERNAL_KEYS, true)) {
+                continue; // 后台密码哈希等敏感键不进 readAll()
+            }
             $out[$k] = $v;
         }
         $out['deepseekApiKey'] = self::decryptSecret(isset($raw['deepseekApiKey']) ? $raw['deepseekApiKey'] : '');
@@ -138,11 +153,68 @@ class Settings
         $view = [
             'deepseekApiKeyMasked' => self::maskSecret($s['deepseekApiKey']),
             'deepseekApiKeyConfigured' => $s['deepseekApiKey'] !== '',
+            // 后台密码只暴露「存在哪」，绝不返回哈希本身
+            'adminPasswordInDatabase' => self::adminPasswordInDatabase(),
+            'adminPasswordSource' => self::adminPasswordSource(),
         ];
         foreach (self::PUBLIC_KEYS as $key) {
             $view[$key] = array_key_exists($key, $s) ? $s[$key] : null;
         }
         return $view;
+    }
+
+    // ------------------------------------------------------------------
+    // 后台管理员密码（bcrypt 哈希存 settings.adminPasswordHash）
+    // ------------------------------------------------------------------
+
+    /**
+     * 读取后台密码哈希（数据库里没有则返回空字符串）。
+     * 绕开 readAll() 的缓存与视图，保证改完密码立刻生效。
+     */
+    public static function adminPasswordHash()
+    {
+        try {
+            $v = Db::getSetting(self::ADMIN_PASSWORD_HASH_KEY);
+        } catch (\Exception $e) {
+            Log::warn('读取后台密码哈希失败', ['error' => $e->getMessage()]);
+            return '';
+        }
+        return is_string($v) ? trim($v) : '';
+    }
+
+    /** 后台密码是否已存于数据库（false 表示还在用 config.php 的初始密码） */
+    public static function adminPasswordInDatabase()
+    {
+        return self::adminPasswordHash() !== '';
+    }
+
+    /** 后台密码来源：database（数据库哈希）/ config（config.php 兜底密码） */
+    public static function adminPasswordSource()
+    {
+        return self::adminPasswordInDatabase() ? 'database' : 'config';
+    }
+
+    /**
+     * 写入后台密码哈希（bcrypt）。
+     * @param string $hash password_hash() 的产物
+     */
+    public static function setAdminPasswordHash($hash)
+    {
+        if (!is_string($hash) || $hash === '') {
+            throw new \RuntimeException('后台密码哈希不能为空');
+        }
+        Db::setSetting(self::ADMIN_PASSWORD_HASH_KEY, $hash);
+        self::flush();
+    }
+
+    /**
+     * 删除后台密码哈希 —— 后台密码回到 config.php 里的初始密码（忘记密码的救援路径）。
+     * 注意：本方法不写入空值，而是直接删除该行，避免留下空哈希。
+     */
+    public static function clearAdminPasswordHash()
+    {
+        Db::run('DELETE FROM settings WHERE `key` = ?', [self::ADMIN_PASSWORD_HASH_KEY]);
+        self::flush();
     }
 
     /** 允许通过后台修改的字段及其类型校验 */
