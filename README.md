@@ -8,18 +8,24 @@
 
 ## 快速开始（三步）
 
-### 第 1 步：部署服务器（可选但推荐）
+### 第 1 步：部署服务器（二选一，想聊天/双人同步就需要）
 
-聊天、双人同步、AI 记账需要一个服务器。详见 **[docs/03-服务器部署.md](docs/03-服务器部署.md)**。
+**方案 A：PHP 版（推荐，宝塔用户零依赖）** —— 不用装 Node、不用 npm，直接把 `server-php/` 丢进宝塔的 PHP 站点即可。
+详见 **[docs/10-PHP服务端部署.md](docs/10-PHP服务端部署.md)**。
+
+**方案 B：Node 版** —— 功能完全一样（同一套接口契约），适合有 Node 环境或想跑 Docker 的情况。
+详见 **[docs/03-服务器部署.md](docs/03-服务器部署.md)**。
 
 ```bash
+# Node 版快速体验
 cd server
 cp .env.example .env      # 修改 JWT_SECRET 和 ADMIN_PASSWORD
 npm install
 npm start                 # 默认 http://0.0.0.0:8787
 ```
 
-没有服务器也能用：App 支持单机模式（记账、密码本、宠物、签到全部可用），只是两台手机不互通。
+> 两个版本**接口契约完全一致**（[docs/API.md](docs/API.md)），App 不需要任何改动，选哪个都行，别同时指向同一份数据。
+> 没有服务器也能用：App 支持单机模式（记账、密码本、宠物、签到全部可用），只是两台手机不互通。
 
 ### 第 2 步：云端编译出 IPA
 
@@ -75,6 +81,7 @@ iphone情侣软件/
 │     ├─ Features/              # 各功能页面
 │     └─ Resources/             # 资源目录（App 图标等）
 ├─ server/                      # Node 服务端（Express + SQLite + ws + 后台管理）
+├─ server-php/                  # PHP 服务端（与 Node 版同一套接口契约，宝塔零依赖）
 ├─ scripts/build-ipa.sh         # 云端构建脚本
 ├─ tools/make-icon.mjs          # 图标生成脚本（纯 Node）
 ├─ .github/workflows/           # GitHub Actions 云编译流水线
@@ -89,7 +96,8 @@ iphone情侣软件/
 | --- | --- |
 | [docs/01-签名证书判断.md](docs/01-签名证书判断.md) | 判断你的 P12 能不能签名「完整版」、能不能用灵动岛 |
 | [docs/02-云编译与安装.md](docs/02-云编译与安装.md) | 从推送代码到装进 iPhone 的完整步骤 |
-| [docs/03-服务器部署.md](docs/03-服务器部署.md) | 服务端部署（直跑 / Docker / systemd / Nginx / HTTPS） |
+| [docs/03-服务器部署.md](docs/03-服务器部署.md) | Node 版服务端部署（直跑 / Docker / systemd / Nginx / HTTPS） |
+| [docs/10-PHP服务端部署.md](docs/10-PHP服务端部署.md) | **PHP 版服务端部署（宝塔，不装 Node）** |
 | [docs/09-宝塔Linux部署.md](docs/09-宝塔Linux部署.md) | **只讲 Linux / 宝塔面板部署（含常驻运行、权限、排错表）** |
 | [docs/04-后台管理.md](docs/04-后台管理.md) | 后台页面：填 DeepSeek Key、开关、统计 |
 | [docs/05-功能与需求对照.md](docs/05-功能与需求对照.md) | 每条需求在代码里的位置与注意事项 |
@@ -104,7 +112,7 @@ iphone情侣软件/
 ## 技术说明
 
 - **iOS**：SwiftUI，零第三方依赖，最低 iOS 16.1；本地数据用 JSON 文件 + Keychain + AES-GCM；实时通信 URLSessionWebSocketTask。
-- **服务端**：Node 20+ / Express 4 / better-sqlite3 / ws / bcryptjs / jsonwebtoken，只有一个原生依赖。
+- **服务端**：两套实现，接口契约相同 —— Node 20+（Express 4 / better-sqlite3 / ws）或 PHP 8.1+（纯 PHP + PDO SQLite，无需 Composer）。
 - **构建**：XcodeGen 生成工程（不再手写 pbxproj），GitHub Actions 在 macOS 上编译未签名 IPA。
 - **隐私**：记账与密码本永远只存在手机上；服务器只保存聊天、火花、宠物、签到、愿望、加班记录。
 

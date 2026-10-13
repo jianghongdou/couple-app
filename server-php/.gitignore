@@ -1,0 +1,27 @@
+# 本地配置（含密钥，绝不入库）
+config.php
+
+# 运行时数据：SQLite 数据库、表情文件、日志
+data/
+!data/.gitkeep
+data-*/
+
+# 日志（data/logs 已在上面忽略；这里覆盖根目录下的临时日志）
+*.log
+
+# 测试临时文件
+# 注意：test-report.txt 是 php test/smoke.php 的真实输出，作为验收证据保留在仓库里
+!test-report.txt
+test-server.log
+test-ws-server.log
+
+# 依赖（本项目不需要 Composer，留着是为了防止误提交）
+vendor/
+composer.lock
+
+# 编辑器/系统垃圾
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
