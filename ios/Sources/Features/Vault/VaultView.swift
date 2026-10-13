@@ -294,21 +294,24 @@ struct VaultCreateView: View {
         let value = password
         let remember = enableBiometric
         Task {
-            var error: String?
+            // 注意：变量名不能叫 error，否则会被 catch 的隐式 error 遮蔽
+            var failure: String?
             do {
                 try store.createVault(password: value)
                 if remember {
                     Keychain.set(value, for: "vaultMasterPassword")
                 }
             } catch {
-                error = "创建失败：\(error.localizedDescription)"
+                failure = "创建失败：\(error.localizedDescription)"
             }
+            // 转成 let 再进并发闭包
+            let failureMessage = failure
             await MainActor.run {
                 isWorking = false
                 password = ""
                 confirm = ""
-                if let error = error {
-                    toast.error(error)
+                if let failureMessage = failureMessage {
+                    toast.error(failureMessage)
                 } else {
                     Haptics.success()
                     toast.success("密码本已创建")
@@ -416,12 +419,14 @@ struct VaultUnlockView: View {
             } catch {
                 failure = "主密码不正确"
             }
+            // 转成 let 再进并发闭包
+            let failureMessage = failure
             await MainActor.run {
                 isWorking = false
                 password = ""
-                if let failure = failure {
+                if let failureMessage = failureMessage {
                     attempts += 1
-                    errorText = failure
+                    errorText = failureMessage
                     Haptics.error()
                 } else {
                     Haptics.success()

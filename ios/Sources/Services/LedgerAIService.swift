@@ -63,9 +63,11 @@ final class LedgerAIService: ObservableObject {
             }
         }
 
+        // ⚠️ 必须先把值取成 let：@Sendable 闭包（MainActor.run）里不能引用可变局部变量
+        let errorSnapshot = result.errorText
         await MainActor.run {
             self.isParsing = false
-            if !result.errorText.isEmpty { self.errorText = result.errorText }
+            if !errorSnapshot.isEmpty { self.errorText = errorSnapshot }
         }
         return result
     }

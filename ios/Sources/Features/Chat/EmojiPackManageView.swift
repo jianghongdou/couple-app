@@ -221,12 +221,15 @@ struct EmojiPackManageView: View {
                 await MainActor.run { uploadCount += 1 }
             }
 
+            // 转成 let 再进并发闭包
+            let successCount = success
+            let failedCount = failed
             await MainActor.run {
                 isUploading = false
                 uploadTotal = 0
                 Haptics.success()
-                if success > 0 {
-                    toast.success("成功上传 \(success) 张表情" + (failed > 0 ? "，\(failed) 张失败" : ""))
+                if successCount > 0 {
+                    toast.success("成功上传 \(successCount) 张表情" + (failedCount > 0 ? "，\(failedCount) 张失败" : ""))
                 } else {
                     toast.error("上传失败，请检查服务器连接")
                 }

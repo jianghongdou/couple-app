@@ -330,9 +330,11 @@ struct PetView: View {
                     data = ImageTools.compress(image, maxBytes: 500_000, maxDimension: 800)
                 }
             }
+            // 转成 let 再进并发闭包
+            let photoData = data
             await MainActor.run {
                 isLoadingPhoto = false
-                if let data = data, let _ = store.saveCustomPetImage(data) {
+                if let photoData = photoData, let _ = store.saveCustomPetImage(photoData) {
                     Haptics.success()
                     toast.success("宠物照片已更新（只存在本机）")
                     sync.requestSync()
