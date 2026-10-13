@@ -260,6 +260,8 @@ class Installer
             if (!Db::hasCoreTables()) {
                 throw new \RuntimeException('数据表创建后自检失败');
             }
+            // 后台管理员密码：安装时就以 bcrypt 哈希写进数据库（config.php 里不再保存明文密码）
+            Settings::setAdminPasswordHash(Auth::hashAdminPassword($values['admin_password']));
         } catch (\Throwable $e) {
             @unlink($configPath);
             Config::reload();   // 已回滚配置，恢复「未安装」状态的缓存
@@ -284,7 +286,7 @@ class Installer
             // 安装向导自动生成，用户不需要关心
             'jwt_secret' => bin2hex(random_bytes(32)),
             'admin_jwt_secret' => '',
-            'admin_password' => $values['admin_password'],
+            'admin_password' => '',   // 后台密码存在数据库（settings.adminPasswordHash），这里留空
             'deepseek_api_key' => '',
             'db_host' => $values['db_host'],
             'db_port' => (int) $values['db_port'],

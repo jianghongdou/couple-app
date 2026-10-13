@@ -609,10 +609,24 @@ try {
         } else {
             ok(false, 'jwt_secret 为自动生成的随机串');
         }
-        if (preg_match("/'admin_password'\s*=>\s*'([^']+)'/", $src, $m)) {
-            ok($m[1] === $ADMIN_PASSWORD, 'config.php 的后台密码与填写的一致');
+        // 后台密码不再写进 config.php（而是以 bcrypt 哈希存进数据库）
+        if (preg_match("/'admin_password'\s*=>\s*'([^']*)'/", $src, $m)) {
+            ok($m[1] === '', 'config.php 不保存后台密码（留空，密码在数据库里）', '实际为 [' . $m[1] . ']');
         } else {
-            ok(false, 'config.php 的后台密码与填写的一致');
+            ok(false, 'config.php 不保存后台密码（留空，密码在数据库里）');
+        }
+        try {
+            $dbPdo = dbConnect(true);
+            $st = $dbPdo->prepare('SELECT `value` FROM settings WHERE `key` = ?');
+            $st->execute(['adminPasswordHash']);
+            // 注意：settings.value 是 JSON 编码存储的，要 decode 后再比对
+            $dbRaw = (string) $st->fetchColumn();
+            $dbHash = is_string($dbRaw) ? (string) json_decode($dbRaw, true) : '';
+            ok($dbHash !== '' && strpos($dbHash, '$2') === 0, '后台密码哈希已写入数据库（bcrypt）', '原始值 ' . substr($dbRaw, 0, 12));
+            ok($dbHash !== '' && password_verify($ADMIN_PASSWORD, $dbHash), '数据库里的哈希与填写的后台密码匹配');
+            ok(strpos($src, $dbHash) === false && strpos($src, $ADMIN_PASSWORD) === false, 'config.php 里既没有哈希也没有明文密码');
+        } catch (Throwable $e) {
+            ok(false, '后台密码哈希已写入数据库（bcrypt）', $e->getMessage());
         }
         ok(strpos($src, "public_base_url' => '" . $SITE_URL . "'") !== false,
             'config.php 写入站点地址（用于表情绝对地址）');

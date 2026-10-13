@@ -510,13 +510,16 @@ PHP 8.3.35 · WINNT
   ✅ config.php 已生成
   ✅ 数据库与核心表已创建（11 张表）
   ✅ 建表数量完整（users/couples/messages/emoji_packs/emoji_items/sync_objects/settings/ai_usage/admin_logs/rate_limits/ws_events = 11 张）
-  ✅ 默认 settings 已写入（13 项）
+  ✅ 默认 settings 已写入（14 项）
   ✅ 已写入 schema_version
   ✅ config.php 含 db_* 配置
   ✅ config.php 的 db_name 正确
   ✅ config.php 含 jwt_secret
   ✅ jwt_secret 为自动生成的随机串（长度 64）
-  ✅ config.php 的后台密码与填写的一致
+  ✅ config.php 不保存后台密码（留空，密码在数据库里）
+  ✅ 后台密码哈希已写入数据库（bcrypt）
+  ✅ 数据库里的哈希与填写的后台密码匹配
+  ✅ config.php 里既没有哈希也没有明文密码
   ✅ config.php 写入站点地址（用于表情绝对地址）
   ✅ config.php 含 timezone / ws_port 等运行参数
   ✅ config.php 是合法 PHP 文件
@@ -568,5 +571,5 @@ PHP 8.3.35 · WINNT
 测试配置目录已删除： test/install-config
 
 ========================================
-  ✅ ALL INSTALL TESTS PASSED（通过 102 项断言）
+  ✅ ALL INSTALL TESTS PASSED（通过 105 项断言）
 ========================================

@@ -252,11 +252,12 @@ class Config
         } elseif (strlen($jwt) < 16) {
             $errors[] = '配置项 jwt_secret 过短（当前 ' . strlen($jwt) . ' 位，要求 ≥32 位随机串）';
         }
+        // admin_password 已改为「可选」：后台密码默认存放在数据库（settings.adminPasswordHash），
+        // 在后台「安全」页或 php bin/console.php set-admin-password 里设置。
+        // config.php 里这一项只是「首次迁移前的初始密码」（旧版升级兼容），留空即可。
         $pwd = $values['admin_password'];
-        if ($pwd === '') {
-            $errors[] = '缺少配置项 admin_password（后台管理登录密码）';
-        } elseif (strlen($pwd) < 6) {
-            $errors[] = '配置项 admin_password 过短（当前 ' . strlen($pwd) . ' 位，至少 6 位）';
+        if ($pwd !== '' && strlen($pwd) < 6) {
+            $errors[] = '配置项 admin_password 过短（当前 ' . strlen($pwd) . ' 位，至少 6 位，或直接留空改用数据库里的密码）';
         }
         if ($values['db_name'] === '' || $values['db_user'] === '') {
             $errors[] = '缺少数据库配置（db_name / db_user），请通过网页安装向导生成 config.php';

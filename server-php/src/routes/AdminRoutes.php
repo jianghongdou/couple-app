@@ -40,6 +40,11 @@ class AdminRoutes
             $valid = Auth::verifyAdminPassword($password);
 
             if (!$valid) {
+                // 还没设过任何后台密码（数据库没有哈希、config.php 也没写）时，给一条能照着做的提示
+                if (!Settings::adminPasswordInDatabase() && (string) Config::get('admin_password', '') === '') {
+                    throw new HttpException(409, 'admin_password_unset',
+                        '尚未设置后台密码。请在服务器执行：php bin/console.php set-admin-password 你的新密码');
+                }
                 Auth::logAdminAction('admin.login.failed', '密码错误');
                 Log::warn('后台登录失败', ['ip' => Http::clientIp()]);
                 throw new HttpException(401, 'unauthorized', '密码错误');
