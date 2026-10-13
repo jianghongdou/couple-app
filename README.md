@@ -90,6 +90,7 @@ iphone情侣软件/
 | [docs/01-签名证书判断.md](docs/01-签名证书判断.md) | 判断你的 P12 能不能签名「完整版」、能不能用灵动岛 |
 | [docs/02-云编译与安装.md](docs/02-云编译与安装.md) | 从推送代码到装进 iPhone 的完整步骤 |
 | [docs/03-服务器部署.md](docs/03-服务器部署.md) | 服务端部署（直跑 / Docker / systemd / Nginx / HTTPS） |
+| [docs/09-宝塔Linux部署.md](docs/09-宝塔Linux部署.md) | **只讲 Linux / 宝塔面板部署（含常驻运行、权限、排错表）** |
 | [docs/04-后台管理.md](docs/04-后台管理.md) | 后台页面：填 DeepSeek Key、开关、统计 |
 | [docs/05-功能与需求对照.md](docs/05-功能与需求对照.md) | 每条需求在代码里的位置与注意事项 |
 | [docs/06-常见问题.md](docs/06-常见问题.md) | 装不上 / 连不上 / 同步失败 / AI 不可用 |
