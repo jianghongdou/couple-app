@@ -49,13 +49,19 @@ CentOS / 宝塔用户建议直接在 **宝塔 → 软件商店 → Node.js 版�
 
 目录按你的实际情况：`/www/wwwroot/couple-app/server`
 
-### 方式 A：用干净包覆盖（推荐，对应桌面上的 `server-clean.zip`）
+### 方式 A：用更新包覆盖（推荐，桌面上的 `couple-server-update.zip`）
 
-1. 宝塔 → 文件 → 进入 `/www/wwwroot/couple-app/server/`
-2. 上传 `server-clean.zip`（**0.15 MB 左右的那个，不含 node_modules**）
-3. 右键 → 解压 → 覆盖
-   - ✅ 不会动你的 `.env`
+1. 宝塔 → 文件 → 进入 **`/www/wwwroot/couple-app/`**（注意：是**项目根目录**，不是 server 目录）
+2. 上传 `couple-server-update.zip`（0.15 MB 左右，**不含 node_modules**）
+3. 右键 → 解压
+   - 包内已经带了一层 `server/`，所以文件会**自动落到 `/www/wwwroot/couple-app/server/`**，不会放错
+   - ✅ 不会覆盖你的 `.env`（包里不含）
    - ✅ 不会动你的 `data/`（数据库和表情图片都在这里）
+
+> ⚠️ 解压位置搞错会报 `Cannot find package 'express'`：
+> 如果文件被解压到 `/www/wwwroot/couple-app/src/`（少了 `server/` 这一层），
+> 那一层没有 `node_modules`，node 自然找不到依赖。
+> 判断方法：`ls /www/wwwroot/couple-app/src` 应该**不存在**；正确的位置是 `/www/wwwroot/couple-app/server/src`。
 
 ### 方式 B：只删掉错误的依赖（最小改动）
 
@@ -261,7 +267,8 @@ cd /www/wwwroot/couple-app/server
 tar czf ~/couple-backup-$(date +%F).tar.gz data
 
 # 2) 上传新代码（只传 src/ scripts/ package.json public/ 等，绝不含 node_modules）
-#    宝塔：上传 server-clean.zip → 解压覆盖
+#    宝塔：把 couple-server-update.zip 上传到 /www/wwwroot/couple-app/ 后解压
+#          （包内自带 server/ 一层，会自动落到 server/ 下）
 #    命令行：rsync -av --exclude node_modules --exclude data --exclude .env ./server/ root@服务器:/www/wwwroot/couple-app/server/
 
 # 3) 依赖有变化时才需要重装
@@ -281,7 +288,8 @@ pm2 restart couple-server      # 或 systemctl restart couple-server / 宝塔里
 | `❌ 启动失败：环境配置不完整` / 提示缺少 `JWT_SECRET` | `.env` 没建或没填 | `cp .env.example .env` 后填 JWT_SECRET / ADMIN_PASSWORD |
 | `端口 8787 已被占用` | 端口冲突 | `ss -lntp \| grep 8787` 找到进程，或改 `.env` 里的 PORT |
 | `EACCES: permission denied` 写 `data/` | 运行用户对目录没权限 | `chown -R www:www /www/wwwroot/couple-app/server` |
-| `Cannot find module 'express'` | 依赖没装 / 装到别处了 | 在 server 目录 `npm install` |
+| `Cannot find module 'express'` / `Cannot find package 'express' imported from ...` | 依赖没装，或**启动目录不对**（解压少了 `server/` 这层，或在错的目录里跑） | 先确认 `ls 启动文件所在的上一级` 里有 `node_modules` 与 `package.json`；在该目录执行 `npm install`。正确目录是 `/www/wwwroot/couple-app/server` |
+| 宝塔 Node 项目启动报错但手工 `npm start` 正常 | 面板里的「项目目录」填错了 | 项目目录填 `/www/wwwroot/couple-app/server`，启动文件 `src/index.js` |
 | WebSocket 连不上（聊天发不出） | Nginx 反代缺 Upgrade 头 | 按第七节补两行并重载 Nginx |
 | App「测试连接」失败 | 端口没放行 / 云安全组 / 地址写错 | 先用 `curl` 从服务器本身测，再从外网测；地址不要带 `/api` |
 | 后台打不开 | 路径要写 `/admin` | `http://地址:8787/admin` |
