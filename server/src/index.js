@@ -33,9 +33,17 @@ import adminRoutes from './routes/admin.js';
 // 缺少 JWT_SECRET / ADMIN_PASSWORD 时明确报错退出
 assertConfig();
 setLevel(CONFIG.logLevel);
-// 确保 data/ 与表情目录存在（启动时自动创建）
-ensureDirs();
-initDb();
+
+// 启动初始化：失败时给出「能照做」的中文提示，而不是让用户面对一大串堆栈
+try {
+  // 确保 data/ 与表情目录存在（启动时自动创建）
+  ensureDirs();
+  initDb();
+} catch (err) {
+  process.stderr.write(`\n❌ 启动失败：${(err && err.message) || err}\n`);
+  process.stderr.write('\n排查建议：在 server 目录下执行  npm run doctor\n\n');
+  process.exit(1);
+}
 
 // 同步内置公共表情包（public/emoji/<包名>/<图片>）
 // 这些包对所有用户可见（API.md §6 的 isPublic=true）

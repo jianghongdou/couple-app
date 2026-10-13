@@ -38,3 +38,7 @@ run*-log.txt
 build-log.zip
 build-logs/
 
+
+# 上传服务器用的打包文件
+*.zip
+

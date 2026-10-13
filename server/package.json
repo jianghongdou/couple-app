@@ -13,6 +13,7 @@
     "dev": "node --watch src/index.js",
     "test": "node test/smoke.mjs",
     "test:all": "node test/run.mjs",
+    "doctor": "node scripts/doctor.mjs",
     "init-db": "node src/init-db.js",
     "fetch-sqlite": "node scripts/fetch-sqlite-binary.mjs"
   },

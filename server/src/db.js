@@ -150,6 +150,42 @@ CREATE INDEX IF NOT EXISTS idx_admin_logs_time ON admin_logs(created_at);
 `;
 
 /**
+ * 把「原生模块加载失败」翻译成能直接照做的中文提示。
+ * 最常见的场景：把本机（Windows/macOS）装好的 node_modules 上传到了 Linux 服务器。
+ * @param {any} err
+ * @returns {string} 提示文本，非此类错误时返回空串
+ */
+function explainNativeModuleError(err) {
+  const code = err && err.code;
+  const message = String((err && err.message) || '');
+  const isNativeLoadIssue =
+    code === 'ERR_DLOPEN_FAILED' ||
+    /better_sqlite3\.node|cannot open shared object|not a valid Win32|invalid ELF header|incompatible architecture|mach-o/i.test(
+      message
+    );
+  if (!isNativeLoadIssue) return '';
+
+  return [
+    '',
+    '────────────────────────────────────────────',
+    '这看起来是 better-sqlite3 原生模块与当前系统不匹配。',
+    '最常见原因：把本机（Windows / macOS）已经装好的 node_modules',
+    '一起上传到了 Linux 服务器 —— 原生二进制是按平台编译的，不能跨平台复用。',
+    '',
+    '在 server 目录下依次执行：',
+    '    rm -rf node_modules',
+    '    npm install',
+    '    npm run doctor        # 自检，确认平台匹配',
+    '',
+    '如果 npm install 也拉不到预编译二进制：',
+    '    npm run fetch-sqlite  # 从国内镜像单独下载',
+    '    # 或者装编译工具后从源码编译：',
+    '    apt install -y python3 make g++ && npm install --build-from-source',
+    '────────────────────────────────────────────',
+  ].join('\n');
+}
+
+/**
  * 初始化数据库连接、建表、写入默认设置。
  * 可重复调用（幂等）。
  * @returns {import('better-sqlite3').Database}
@@ -159,7 +195,14 @@ export function initDb() {
 
   fs.mkdirSync(DATA_DIR, { recursive: true });
 
-  db = new Database(DB_FILE);
+  try {
+    db = new Database(DB_FILE);
+  } catch (err) {
+    const hint = explainNativeModuleError(err);
+    const wrapped = new Error(`数据库初始化失败：${(err && err.message) || err}${hint}`);
+    wrapped.cause = err;
+    throw wrapped;
+  }
   // 开启 WAL（读写并发更好）；busy_timeout 避免瞬时锁冲突
   db.pragma('journal_mode = WAL');
   db.pragma('synchronous = NORMAL');

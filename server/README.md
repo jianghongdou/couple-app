@@ -45,6 +45,7 @@ npm start
 | 命令 | 作用 |
 | --- | --- |
 | `npm start` | 启动服务 |
+| `npm run doctor` | **环境自检**：Node 版本 / 原生模块平台 / 能否建库 / .env / 数据目录，出问题直接给修复命令 |
 | `npm run dev` | 开发模式（文件变更自动重启） |
 | `npm test` | 端到端冒烟测试（237 项断言） |
 | `npm run test:all` | 全量验证（冒烟 + 启动 + 配置 + AI + 边界行为） |
@@ -335,6 +336,8 @@ magic bytes 拒绝伪造图片、路径穿越拒绝）→ 后台（掩码校验�
 | 现象 | 原因与处理 |
 | --- | --- |
 | 启动即退出，提示缺少 `JWT_SECRET` | 未创建 `.env` 或未填写。参考 `.env.example` |
+| 启动报 `ERR_DLOPEN_FAILED` / `not a valid Win32 application` | **把本机的 node_modules 传到了服务器**（原生模块不能跨平台）。执行 `rm -rf node_modules && npm install`，仍失败再 `npm run fetch-sqlite` |
+| 不确定为什么起不来 | 执行 `npm run doctor`：一键检查 Node 版本、原生模块平台匹配、能否建库、.env、数据目录可写性 |
 | `端口 8787 已被占用` | 换 `PORT`，或结束占用进程（Windows: `netstat -ano \| findstr 8787`） |
 | 客户端表情图片 401 | `?token=` 未带或 token 过期；iOS 需用 `AsyncImage(url:)` 带 query token |
 | 表情上传 400 | 检查是否真实图片、体积是否 ≤1MB、声明 mime 与实际格式是否一致 |
