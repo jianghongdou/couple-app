@@ -85,6 +85,12 @@ struct ServerMeta: Codable, Equatable {
     var emojiEnabled: Bool = true
     var aiEnabled: Bool = true
     var syncEnabled: Bool = true
+    /// AI 聊天总开关（服务端 features.aiChat；老服务端不返回则为 nil = 未知）
+    var aiChatEnabled: Bool?
+    /// 服务端已启用的 AI 供应商数量（服务端 features.aiProviders；老服务端不返回则为 nil）
+    var aiProviderCount: Int?
+    /// 服务端是否已配置可用的 AI（服务端顶层 aiConfigured；老服务端不返回则为 nil）
+    var aiConfigured: Bool?
     var serverTime: Double = 0
 
     init() {}
@@ -103,7 +109,11 @@ struct ServerMeta: Codable, Equatable {
             self.emojiEnabled = JSONRead.bool(features, "emoji", true)
             self.aiEnabled = JSONRead.bool(features, "ai", true)
             self.syncEnabled = JSONRead.bool(features, "sync", true)
+            // 只有服务端明确返回了才认，避免误判成「功能不可用」
+            if let aiChat = features["aiChat"] as? Bool { self.aiChatEnabled = aiChat }
+            if features["aiProviders"] != nil { self.aiProviderCount = JSONRead.int(features, "aiProviders") }
         }
+        if json["aiConfigured"] != nil { self.aiConfigured = JSONRead.bool(json, "aiConfigured") }
     }
 
     /// 需要强制更新

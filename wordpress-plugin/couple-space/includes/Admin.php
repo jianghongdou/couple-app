@@ -40,6 +40,13 @@ class Admin {
 		add_action( 'admin_post_couple_space_user_action', array( __CLASS__, 'handle_user_action' ) );
 		add_action( 'admin_post_couple_space_ai_test', array( __CLASS__, 'handle_ai_test' ) );
 		add_action( 'admin_post_couple_space_secret', array( __CLASS__, 'handle_secret' ) );
+
+		// AI 供应商 / AI 聊天（docs/API-AI聊天.md §AI-5）。
+		add_action( 'admin_post_couple_space_ai_provider', array( 'CoupleSpace\\AiAdmin', 'handle_provider_save' ) );
+		add_action( 'admin_post_couple_space_ai_provider_default', array( 'CoupleSpace\\AiAdmin', 'handle_provider_default' ) );
+		add_action( 'admin_post_couple_space_ai_provider_delete', array( 'CoupleSpace\\AiAdmin', 'handle_provider_delete' ) );
+		add_action( 'admin_post_couple_space_ai_provider_test', array( 'CoupleSpace\\AiAdmin', 'handle_provider_test' ) );
+		add_action( 'admin_post_couple_space_ai_chat', array( 'CoupleSpace\\AiAdmin', 'handle_chat_settings' ) );
 	}
 
 	/** 注册菜单。 */
@@ -56,6 +63,8 @@ class Admin {
 
 		add_submenu_page( self::SLUG, '总览', '总览', 'manage_options', self::SLUG, array( __CLASS__, 'page_overview' ) );
 		add_submenu_page( self::SLUG, 'AI 设置', 'AI 设置', 'manage_options', self::SLUG . '-ai', array( __CLASS__, 'page_ai' ) );
+		add_submenu_page( self::SLUG, 'AI 供应商', 'AI 供应商', 'manage_options', self::SLUG . '-ai-providers', array( 'CoupleSpace\\AiAdmin', 'page_providers' ) );
+		add_submenu_page( self::SLUG, 'AI 聊天', 'AI 聊天', 'manage_options', self::SLUG . '-ai-chat', array( 'CoupleSpace\\AiAdmin', 'page_chat' ) );
 		add_submenu_page( self::SLUG, '应用设置', '应用设置', 'manage_options', self::SLUG . '-app', array( __CLASS__, 'page_app' ) );
 		add_submenu_page( self::SLUG, '用户管理', '用户管理', 'manage_options', self::SLUG . '-users', array( __CLASS__, 'page_users' ) );
 		add_submenu_page( self::SLUG, '统计', '统计', 'manage_options', self::SLUG . '-stats', array( __CLASS__, 'page_stats' ) );
@@ -93,6 +102,16 @@ class Admin {
 	}
 
 	/**
+	 * 渲染视图（供 AiAdmin 等外部后台模块复用）。
+	 *
+	 * @param string              $view 视图名（不含扩展名）。
+	 * @param array<string,mixed> $vars 变量。
+	 */
+	public static function view_public( $view, array $vars = array() ) {
+		self::view( $view, $vars );
+	}
+
+	/**
 	 * 表单处理完成后跳回来源页并带上提示。
 	 *
 	 * @param string $page    页面 slug 后缀（ai/app/users/server/空）。
@@ -111,6 +130,17 @@ class Admin {
 		);
 		wp_safe_redirect( $url );
 		exit;
+	}
+
+	/**
+	 * 跳回后台页并带提示（供 AiAdmin 等外部后台模块复用）。
+	 *
+	 * @param string $page   页面 slug 后缀。
+	 * @param string $notice 提示内容。
+	 * @param string $type   success / error / warning / info。
+	 */
+	public static function redirect_public( $page, $notice, $type = 'success' ) {
+		self::redirect( $page, $notice, $type );
 	}
 
 	/** 渲染提示条。 */

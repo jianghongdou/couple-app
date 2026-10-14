@@ -124,6 +124,9 @@ class Settings {
 		'deepseekModel',
 		'aiEnabled',
 		'aiDailyLimit',
+		'aiChatEnabled',
+		'aiProviderId',
+		'aiProviderModel',
 		'registerOpen',
 		'announcement',
 		'minAppBuild',
@@ -282,6 +285,9 @@ class Settings {
 		'deepseekModel'     => 'string',
 		'aiEnabled'         => 'boolean',
 		'aiDailyLimit'      => 'int',
+		'aiChatEnabled'     => 'boolean',
+		'aiProviderId'      => 'string',
+		'aiProviderModel'   => 'string',
 		'registerOpen'      => 'boolean',
 		'announcement'      => 'string',
 		'minAppBuild'       => 'int',
@@ -372,6 +378,87 @@ class Settings {
 	public static function is_ai_enabled() {
 		$s = self::read_all();
 		return false !== $s['aiEnabled'];
+	}
+
+	/** @return bool AI 聊天总开关（docs/API-AI聊天.md §AI-5 第 5 条）。 */
+	public static function is_ai_chat_enabled() {
+		$s = self::read_all();
+		return ! array_key_exists( 'aiChatEnabled', $s ) || false !== $s['aiChatEnabled'];
+	}
+
+	/** @return string 默认供应商 id（空表示没有显式默认）。 */
+	public static function ai_default_provider_id() {
+		$s = self::read_all();
+		return isset( $s['aiProviderId'] ) && is_string( $s['aiProviderId'] ) ? $s['aiProviderId'] : '';
+	}
+
+	/** @return string 默认模型（空表示用供应商的 defaultModel）。 */
+	public static function ai_default_model() {
+		$s = self::read_all();
+		return isset( $s['aiProviderModel'] ) && is_string( $s['aiProviderModel'] ) ? $s['aiProviderModel'] : '';
+	}
+
+	/**
+	 * 解析出「这次要用哪个供应商 + 哪个模型」（§AI-4 第 2 步）。
+	 *
+	 * 优先级：伙伴指定的 providerId/model > 后台设置的默认供应商/默认模型 > 默认供应商的 defaultModel。
+	 *
+	 * @param array<string,mixed>|null $partner AI 伙伴对象（可为 null）。
+	 * @return array{provider:array<string,mixed>|null,model:string}|null
+	 */
+	public static function resolve_ai_target( $partner = null ) {
+		$provider = null;
+
+		$want_id = ( is_array( $partner ) && isset( $partner['providerId'] ) ) ? (string) $partner['providerId'] : '';
+		if ( '' === $want_id ) {
+			$want_id = self::ai_default_provider_id();
+		}
+		if ( '' !== $want_id ) {
+			$candidate = Db::get_ai_provider( $want_id );
+			if ( $candidate && ! empty( $candidate['enabled'] ) ) {
+				$provider = $candidate;
+			}
+		}
+		if ( null === $provider ) {
+			$provider = Db::get_default_ai_provider();
+		}
+		if ( null === $provider ) {
+			return null;
+		}
+
+		$model = ( is_array( $partner ) && isset( $partner['model'] ) ) ? trim( (string) $partner['model'] ) : '';
+		if ( '' === $model ) {
+			$model = self::ai_default_model();
+		}
+		if ( '' === $model && isset( $provider['defaultModel'] ) && '' !== (string) $provider['defaultModel'] ) {
+			$model = (string) $provider['defaultModel'];
+		}
+		if ( '' === $model && isset( $provider['models'][0] ) && '' !== (string) $provider['models'][0] ) {
+			$model = (string) $provider['models'][0];
+		}
+
+		return array(
+			'provider' => $provider,
+			'model'    => $model,
+		);
+	}
+
+	/**
+	 * 供应商对象的内部视图：带上解密后的明文 Key（**只允许服务端内部使用**）。
+	 *
+	 * @param array<string,mixed> $provider 供应商对象。
+	 * @return array<string,mixed>
+	 */
+	public static function with_plain_api_key( array $provider ) {
+		$key = '';
+		if ( isset( $provider['id'] ) ) {
+			$row = Db::get_ai_provider_row( $provider['id'] );
+			if ( $row ) {
+				$key = self::decrypt_secret( isset( $row['api_key_enc'] ) ? $row['api_key_enc'] : '' );
+			}
+		}
+		$provider['apiKey'] = $key;
+		return $provider;
 	}
 
 	/** @return int 当前 AI 每日限额（0 表示不限制）。 */

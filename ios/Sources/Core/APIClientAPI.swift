@@ -207,4 +207,105 @@ extension APIClient {
         ])
         return JSONRead.string(dict, "text")
     }
+
+    // MARK: - AI 聊天伙伴（docs/API-AI聊天.md §AI-1 ~ §AI-4）
+
+    /// §AI-1 列出 AI 伙伴（需登录，不要求绑定情侣）
+    func fetchAIPartners() async throws -> [AIPartner] {
+        let dict = try await send("/api/ai/partners")
+        return JSONRead.objects(dict, "partners") { AIPartner(json: $0) }
+    }
+
+    /// §AI-2 新增 AI 伙伴
+    func createAIPartner(
+        name: String,
+        avatarEmoji: String,
+        persona: String,
+        providerId: String,
+        model: String,
+        temperature: Double,
+        enabled: Bool
+    ) async throws -> AIPartner? {
+        let dict = try await send("/api/ai/partners", method: "POST", body: [
+            "name": name,
+            "avatarEmoji": avatarEmoji,
+            "persona": persona,
+            "providerId": providerId,
+            "model": model,
+            "temperature": temperature,
+            "enabled": enabled
+        ])
+        guard let partner = JSONRead.dict(dict["partner"]) else { return nil }
+        return AIPartner(json: partner)
+    }
+
+    /// §AI-2 修改 AI 伙伴（传全部可改字段，服务端按字段覆盖）
+    func updateAIPartner(
+        id: String,
+        name: String,
+        avatarEmoji: String,
+        persona: String,
+        providerId: String,
+        model: String,
+        temperature: Double,
+        enabled: Bool
+    ) async throws -> AIPartner? {
+        let dict = try await send("/api/ai/partners/\(id)", method: "PATCH", body: [
+            "name": name,
+            "avatarEmoji": avatarEmoji,
+            "persona": persona,
+            "providerId": providerId,
+            "model": model,
+            "temperature": temperature,
+            "enabled": enabled
+        ])
+        guard let partner = JSONRead.dict(dict["partner"]) else { return nil }
+        return AIPartner(json: partner)
+    }
+
+    /// §AI-2 删除 AI 伙伴
+    func deleteAIPartner(id: String) async throws {
+        _ = try await send("/api/ai/partners/\(id)", method: "DELETE")
+    }
+
+    /// §AI-3 读取与某个 AI 伙伴的聊天记录（升序返回；before>0 为上翻历史）
+    func fetchAIChatMessages(partnerId: String, before: Double = 0, limit: Int = 50) async throws -> (messages: [AIMessage], hasMore: Bool) {
+        var query: [String: String] = [
+            "partnerId": partnerId,
+            "limit": String(limit)
+        ]
+        if before > 0 { query["before"] = String(Int(before)) }
+        let dict = try await send("/api/ai/chat/messages", query: query)
+        let messages = JSONRead.objects(dict, "messages") { AIMessage(json: $0) }
+        return (messages, JSONRead.bool(dict, "hasMore"))
+    }
+
+    /// §AI-4 给 AI 伙伴发消息（服务端代发大模型，一次性返回 reply）
+    func sendAIChatMessage(partnerId: String, body: String, clientId: String) async throws -> AIChatSendResult {
+        let dict = try await send("/api/ai/chat/messages", method: "POST", body: [
+            "partnerId": partnerId,
+            "body": body,
+            "clientId": clientId
+        ])
+        var result = AIChatSendResult()
+        if let messageDict = JSONRead.dict(dict["message"]) {
+            result.message = AIMessage(json: messageDict)
+        }
+        if let replyDict = JSONRead.dict(dict["reply"]) {
+            result.reply = AIMessage(json: replyDict)
+        }
+        if let usageDict = JSONRead.dict(dict["usage"]) {
+            result.usage = AIUsage(json: usageDict) ?? AIUsage()
+        }
+        return result
+    }
+
+    /// 列出可用供应商（App 只读）。
+    /// 该接口在契约里属于 App 可用接口；服务端若还没有实现（404），
+    /// 由调用方按「没有供应商」容错处理，**不抛错、不崩溃**。
+    func fetchAIProviders() async throws -> [AIProviderOption] {
+        let dict = try await send("/api/ai/providers")
+        // 兼容两种返回：{ ok, providers: [...] } 或直接是一个数组
+        return JSONRead.objects(dict, "providers") { AIProviderOption(json: $0) }
+    }
 }

@@ -254,6 +254,7 @@ final class SessionManager: ObservableObject {
 
     func logout() {
         ChatService.shared.stop()
+        AIChatService.shared.reset()
         SyncEngine.shared.stopAutoSync()
         LiveActivityController.shared.stop()
         DeviceConfig.shared.clearAccount()
@@ -266,6 +267,7 @@ final class SessionManager: ObservableObject {
 
     func forceLogout(reason: String) {
         ChatService.shared.stop()
+        AIChatService.shared.reset()
         SyncEngine.shared.stopAutoSync()
         DeviceConfig.shared.clearAccount()
         user = nil

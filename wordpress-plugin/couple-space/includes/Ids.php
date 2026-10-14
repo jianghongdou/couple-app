@@ -74,6 +74,16 @@ class Ids {
 		return 'a_' . self::base36( (int) floor( microtime( true ) * 1000 ) ) . self::random_suffix( 6 );
 	}
 
+	/** @return string AI 伙伴 id（形如 aip_xxx）。 */
+	public static function new_ai_partner_id() {
+		return self::make_id( 'aip' );
+	}
+
+	/** @return string 供应商 id（形如 prov_xxx）。 */
+	public static function new_ai_provider_id() {
+		return self::make_id( 'prov' );
+	}
+
 	/**
 	 * 校验表情 id 格式（防路径穿越的第一道关卡）。
 	 *

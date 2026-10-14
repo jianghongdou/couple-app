@@ -26,7 +26,7 @@ class Config {
 	const ADMIN_TOKEN_TTL_SECONDS = 43200;
 
 	/** 当前数据库结构版本（写在自建 settings 表的 schema_version）。 */
-	const SCHEMA_VERSION = 2;
+	const SCHEMA_VERSION = 3;
 
 	/** 同步 kind 白名单（API.md §4）。ledger / vault 明确拒绝。 */
 	const SYNC_KINDS = array( 'spark', 'pet', 'checkin', 'wish', 'worklog', 'settings' );
@@ -63,6 +63,20 @@ class Config {
 		'AI_TEXT_MAX'              => 2000,
 		'AI_DAILY_LIMIT_DEFAULT'   => 200,
 		'AI_MAX_ITEMS'             => 200,
+		// AI 聊天扩展（docs/API-AI聊天.md）。
+		'AI_PARTNER_MAX'           => 10,       // §AI-2 每个用户最多 10 个 AI 伙伴。
+		'AI_PARTNER_NAME_MAX'      => 20,       // §AI-2 name 1-20 字。
+		'AI_PARTNER_PERSONA_MAX'   => 2000,     // §AI-2 persona 0-2000 字。
+		'AI_PROVIDER_MODEL_MAX'    => 64,       // §AI-2 model 长度 <= 64。
+		'AI_CHAT_CONTEXT_MAX'      => 20,       // §AI-4 最近 20 条上下文。
+		'AI_CHAT_LIMIT_DEFAULT'    => 50,       // §AI-3 limit 默认 50。
+		'AI_CHAT_LIMIT_MAX'        => 100,      // §AI-3 limit 最大 100。
+		'AI_CHAT_RATE_LIMIT'       => 20,       // §AI-4 同一用户 1 分钟最多 20 次。
+		'AI_CHAT_RATE_WINDOW_MS'   => 60000,    // §AI-4 限流窗口 1 分钟。
+		'AI_CHAT_REPLY_MAX'        => 4000,     // AI 回复落库长度上限（防御上游超长输出）。
+		'AI_UPSTREAM_TIMEOUT'      => 30,       // §AI-4 供应商超时阈值 30 秒 -> 504。
+		'AI_UPSTREAM_ERROR_MAX'    => 200,      // §AI-4 上游错误摘要 <= 200 字。
+		'AI_EMPTY_REPLY_TEXT'      => '（AI 没有返回内容）',
 		'JSON_FIELD_MAX_BYTES'     => 262144,   // payload / meta 上限 256KB。
 		'BODY_MAX_BYTES'           => 4194304,  // 请求体上限 4MB（表情走 base64）。
 	);
@@ -73,6 +87,9 @@ class Config {
 	const DEFAULTS = array(
 		'aiEnabled'          => true,
 		'aiDailyLimit'       => 200,
+		'aiChatEnabled'      => true,
+		'aiProviderId'       => '',
+		'aiProviderModel'    => '',
 		'registerOpen'       => true,
 		'deepseekBaseUrl'    => 'https://api.deepseek.com',
 		'deepseekModel'      => 'deepseek-chat',
@@ -94,6 +111,9 @@ class Config {
 	const OPTION_DEFAULTS = array(
 		'aiEnabled'          => true,
 		'aiDailyLimit'       => 200,
+		'aiChatEnabled'      => true,
+		'aiProviderId'       => '',
+		'aiProviderModel'    => '',
 		'registerOpen'       => true,
 		'deepseekBaseUrl'    => 'https://api.deepseek.com',
 		'deepseekModel'      => 'deepseek-chat',

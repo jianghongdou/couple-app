@@ -28,6 +28,7 @@ struct SettingsView: View {
                     coupleCard
                     appearanceCard
                     syncCard
+                    aiChatCard
                     aiCard
                     dataCard
                     aboutCard
@@ -311,6 +312,31 @@ struct SettingsView: View {
                     Label("重置同步", systemImage: "arrow.counterclockwise")
                 }
                 .buttonStyle(SoftButtonStyle(color: AppTheme.orange))
+            }
+        }
+    }
+
+    // MARK: - AI 聊天伙伴
+
+    /// 入口：与「AI 记账」区分开，这是自定义聊天对象的管理页
+    private var aiChatCard: some View {
+        SectionCard(title: "AI 聊天", icon: "sparkles", subtitle: "AI 伙伴管理") {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("AI 伙伴就是「自定义聊天对象」：起个名字、选个头像、写段性格设定，再挑服务端配好的供应商和模型，就能在聊天页直接聊。")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+
+                Text("AI 伙伴存在服务器上，Key 只保存在服务端；AI 聊天与情侣聊天完全分开。")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+
+                NavigationLink {
+                    AIManageView(wrapsInNavigation: false).appEnvironment()
+                } label: {
+                    Label("管理 AI 聊天伙伴", systemImage: "person.crop.circle.badge.gearshape")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(PrimaryButtonStyle(color: AppTheme.purple))
             }
         }
     }

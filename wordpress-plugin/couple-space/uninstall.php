@@ -36,6 +36,9 @@ $suffixes = array(
 	'ai_usage',
 	'admin_logs',
 	'rate_limits',
+	'ai_partners',
+	'ai_messages',
+	'ai_providers',
 );
 foreach ( $suffixes as $suffix ) {
 	$table = $wpdb->prefix . 'couple_' . $suffix;

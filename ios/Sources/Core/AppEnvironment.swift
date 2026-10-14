@@ -16,5 +16,6 @@ extension View {
             .environmentObject(LiveActivityController.shared)
             .environmentObject(ToastCenter.shared)
             .environmentObject(RealtimeClient.shared)
+            .environmentObject(AIChatService.shared)
     }
 }

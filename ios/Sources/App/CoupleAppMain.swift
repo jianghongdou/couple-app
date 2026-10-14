@@ -12,6 +12,7 @@ struct CoupleAppMain: App {
     @StateObject private var live = LiveActivityController.shared
     @StateObject private var toast = ToastCenter.shared
     @StateObject private var realtime = RealtimeClient.shared
+    @StateObject private var ai = AIChatService.shared
 
     var body: some Scene {
         WindowGroup {
@@ -25,6 +26,7 @@ struct CoupleAppMain: App {
                 .environmentObject(live)
                 .environmentObject(toast)
                 .environmentObject(realtime)
+                .environmentObject(ai)
                 .preferredColorScheme(nil)
         }
     }

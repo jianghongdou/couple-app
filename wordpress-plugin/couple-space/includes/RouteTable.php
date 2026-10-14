@@ -37,6 +37,7 @@ class RouteTable {
 		Routes\ChatRoutes::register( $r );
 		Routes\EmojiRoutes::register( $r );
 		Routes\AiRoutes::register( $r );
+		Routes\AiChatRoutes::register( $r );
 		Routes\AdminRoutes::register( $r );
 	}
 

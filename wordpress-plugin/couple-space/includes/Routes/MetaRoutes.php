@@ -53,6 +53,19 @@ class MetaRoutes extends Base {
 				$ai_on         = ( false !== $s['aiEnabled'] );
 				$ai_configured = ( '' !== $s['deepseekApiKey'] );
 
+				// AI 聊天（docs/API-AI聊天.md §AI-5 第 6 条）：
+				// features.aiChat = AI 聊天是否可用；features.aiProviders = 启用供应商数量。
+				$ai_chat_on  = $ai_on && Settings::is_ai_chat_enabled();
+				$ai_provider = 0;
+				$ai_chat_ok  = false;
+				try {
+					$ai_provider = Db::count_enabled_ai_providers();
+					$ai_chat_ok  = ( null !== Db::get_usable_ai_provider() );
+				} catch ( \Throwable $e ) {
+					$ai_provider = 0;
+					$ai_chat_ok  = false;
+				}
+
 				return self::ok(
 					array(
 						'appName'         => COUPLE_SPACE_DISPLAY_NAME,
@@ -63,11 +76,14 @@ class MetaRoutes extends Base {
 						'announcement'    => is_string( $s['announcement'] ) ? $s['announcement'] : '',
 						'registerOpen'    => ( false !== $s['registerOpen'] ),
 						'features'        => array(
-							'chat'  => true,
-							'emoji' => true,
-							'ai'    => $ai_on,
-							'sync'  => true,
+							'chat'        => true,
+							'emoji'       => true,
+							'ai'          => $ai_on,
+							'aiChat'      => (bool) $ai_chat_on,
+							'aiProviders' => (int) $ai_provider,
+							'sync'        => true,
 						),
+						// 是否至少有一个可用的 AI 供应商（记账 AI 的 aiConfigured 保持原语义）。
 						'aiConfigured'    => $ai_configured,
 					)
 				);

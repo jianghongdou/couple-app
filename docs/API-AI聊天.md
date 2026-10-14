@@ -52,6 +52,36 @@ GET /api/ai/partners
 
 ---
 
+## AI-1b 列出可用供应商（App 只读）
+
+```
+GET /api/ai/providers
+```
+**需登录**。返回服务端**已启用**的供应商，供 App 做「供应商 / 模型」下拉：
+
+```json
+{
+  "ok": true,
+  "aiChatEnabled": true,
+  "providers": [
+    {
+      "id": "prov_deepseek",
+      "name": "DeepSeek",
+      "models": ["deepseek-chat", "deepseek-reasoner"],
+      "defaultModel": "deepseek-chat",
+      "isDefault": true
+    }
+  ],
+  "serverTime": 1791940000000
+}
+```
+
+- 只返回 `enabled=true` 的供应商；一个都没有时 `providers` 为空数组（`aiChatEnabled` 仍反映 AI 聊天总开关）。
+- `models` 为空数组表示「不限制模型名，允许手填」。
+- **绝不返回 `apiKey`、`baseUrl`**（Base URL 也视为敏感信息，不下发）。
+
+---
+
 ## AI-2 新增 / 修改 / 删除 AI 伙伴
 
 ```
