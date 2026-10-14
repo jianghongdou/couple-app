@@ -1,0 +1,373 @@
+情侣空间 WordPress 插件 · 端到端测试报告
+生成时间：2026-10-14 09:25:02
+站点地址：http://127.0.0.1:8890
+PHP：8.3.35
+耗时：55.37 秒
+
+═══════════════════════════════════════════════════════════════
+
+── 环境 ──────────────────────────────────────────────────────────
+   · 站点地址：http://127.0.0.1:8890
+   · WordPress：C:\Users\Tage-HongDou\AppData\Local\wp-test\wordpress
+   · 用户名后缀：mvik64791
+✅ 站点与插件可用（/api/health 返回 200）
+      HTTP 200
+
+── WordPress：激活与数据保留 ───────────────────────────────────────────
+✅ 测试前清空自建表与插件选项（模拟全新安装）
+      剩余自建表 0 张
+✅ 连续激活两次都不报错（幂等）
+      NULL / NULL
+✅ 首次激活即生成初始后台密码并把 bcrypt 哈希写入自建 settings 表
+      hashLen=60 optLen=12 verify=true src=database
+✅ 初始后台密码可以登录 App 后台（/admin/api/login）
+      HTTP 200 {"token":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0eXAiOiJhZG1pbiIsInJvbGUiOiJhZG1pbiIsImlhdCI6MTc5MTk0MTA0OSwiZXhwIjoxNzkxOTg0MjQ5fQ.ga7HoI7ULuMjI05eorZ0FFubNWqVv86K0vw1Gzpu-SE","…
+✅ 激活时建齐 10 张自建表（前缀 wp_）
+      10 张齐全
+✅ 注册保活用户（用于停用/启用验证）
+      HTTP 200
+✅ 数据库里没有哈希时，重新启用会从选项里的初始密码重新播种 bcrypt 哈希
+      database|hasHash
+✅ 重新播种后选项里的初始密码仍可登录
+      HTTP 200 {"token":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0eXAiOiJhZG1pbiIsInJvbGUiOiJhZG1pbiIsImlhdCI6MTc5MTk0MTA1MSwiZXhwIjoxNzkxOTg0MjUxfQ.-XvOrS_K-hb1l-SQyMdkwGwnYKbeGvHjvr4F_o_yLms","…
+✅ 停用插件成功
+      INACTIVE
+✅ 重新启用插件成功
+      NULL
+      ACTIVE
+✅ 停用再启用后数据还在
+      users 行数 = 1
+✅ 重新启用后保活用户仍能登录
+      HTTP 200
+
+── 公开接口（三种地址形式） ────────────────────────────────────────────────
+✅ 伪静态 /api/... → /api/health 字段与 API.md 一致
+      HTTP 200 {"ok":true,"name":"couple-server","version":"1.0.0","time":1791941052371,"serverTime":1791941052371}
+✅ 伪静态 /api/... → /api/meta 字段与 API.md 一致
+      HTTP 200 {"appName":"情侣空间","serverVersion":"1.0.0","minAppBuild":1,"latestAppBuild":1,"updateURL":"","announcement":"","registerOpen":true,"features":{"chat":true,"emoji":true,"ai":…
+✅ 伪静态 /api/... → /api/status 字段与 API.md 一致
+      HTTP 200 {"ok":true,"version":"1.0.0","users":1,"couples":0,"messages":0,"online":0,"dbOk":true,"uptimeSeconds":0,"serverTime":1791941052947}
+✅ REST /wp-json/couple/v1/api/... → /api/health 字段与 API.md 一致
+      HTTP 200 {"ok":true,"name":"couple-server","version":"1.0.0","time":1791941053208,"serverTime":1791941053208}
+✅ REST /wp-json/couple/v1/api/... → /api/meta 字段与 API.md 一致
+      HTTP 200 {"appName":"情侣空间","serverVersion":"1.0.0","minAppBuild":1,"latestAppBuild":1,"updateURL":"","announcement":"","registerOpen":true,"features":{"chat":true,"emoji":true,"ai":…
+✅ REST /wp-json/couple/v1/api/... → /api/status 字段与 API.md 一致
+      HTTP 200 {"ok":true,"version":"1.0.0","users":1,"couples":0,"messages":0,"online":0,"dbOk":true,"uptimeSeconds":0,"serverTime":1791941053732}
+✅ 兜底 /?couple_api=/api/... → /api/health 字段与 API.md 一致
+      HTTP 200 {"ok":true,"name":"couple-server","version":"1.0.0","time":1791941053979,"serverTime":1791941053979}
+✅ 兜底 /?couple_api=/api/... → /api/meta 字段与 API.md 一致
+      HTTP 200 {"appName":"情侣空间","serverVersion":"1.0.0","minAppBuild":1,"latestAppBuild":1,"updateURL":"","announcement":"","registerOpen":true,"features":{"chat":true,"emoji":true,"ai":…
+✅ 兜底 /?couple_api=/api/... → /api/status 字段与 API.md 一致
+      HTTP 200 {"ok":true,"version":"1.0.0","users":1,"couples":0,"messages":0,"online":0,"dbOk":true,"uptimeSeconds":0,"serverTime":1791941054524}
+✅ 登录可以拿到 token
+      token 长度 235
+✅ REST 形式可带 token 访问 /api/auth/me
+      HTTP 200 {"user":{"id":"u_mv7ffn4p0ty7806","username":"keepmvik64791","nickname":"保活","avatarEmoji":"","coupleId":null,"role":"user","disabled":false,"createdAt":1791941049817},"couple"…
+✅ 兜底形式可带 ?token= 访问 /api/auth/me
+      HTTP 200 {"user":{"id":"u_mv7ffn4p0ty7806","username":"keepmvik64791","nickname":"保活","avatarEmoji":"","coupleId":null,"role":"user","disabled":false,"createdAt":1791941049817},"couple"…
+
+── 账号（API.md §2） ───────────────────────────────────────────────
+✅ 注册成功，user/couple/token 字段与 API.md 一致（未绑定时 couple=null）
+      HTTP 200 {"token":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1X212N2Zmcm5zcHI5YjBqbiIsInVzZXJuYW1lIjoiYWxpY2VtdmlrNjQ3OTEiLCJyb2xlIjoidXNlciIsInR5cCI6InVzZXIiLCJpYXQiOjE3OTE5NDEwNTUsI…
+✅ 重复用户名 → 409 conflict
+      HTTP 409 {"error":"conflict","message":"该用户名已被注册","serverTime":1791941056017}
+✅ username 少于 3 位 → 400 invalid_input
+      HTTP 400 {"error":"invalid_input","message":"username 长度不能少于 3 个字符","serverTime":1791941056281}
+✅ username 含非法字符 → 400 invalid_input
+      HTTP 400 {"error":"invalid_input","message":"username 格式不正确（只允许字母、数字和下划线）","serverTime":1791941056603}
+✅ password 少于 6 位 → 400 invalid_input
+      HTTP 400 {"error":"invalid_input","message":"password 长度不能少于 6 个字符","serverTime":1791941056904}
+✅ 密码错误 → 401 unauthorized
+      HTTP 401 {"error":"unauthorized","message":"用户名或密码错误","serverTime":1791941057245}
+✅ 登录成功返回 token
+      HTTP 200 {"token":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1X212N2Zmcm5zcHI5YjBqbiIsInVzZXJuYW1lIjoiYWxpY2VtdmlrNjQ3OTEiLCJyb2xlIjoidXNlciIsInR5cCI6InVzZXIiLCJpYXQiOjE3OTE5NDEwNTcsI…
+✅ GET /api/auth/me 返回 user/couple/serverTime
+      HTTP 200 {"user":{"id":"u_mv7ffrnspr9b0jn","username":"alicemvik64791","nickname":"小爱","avatarEmoji":"🐻","coupleId":null,"role":"user","disabled":false,"createdAt":1791941055688},"co…
+✅ PATCH /api/auth/me 改昵称与头像
+      HTTP 200 {"user":{"id":"u_mv7ffrnspr9b0jn","username":"alicemvik64791","nickname":"新昵称","avatarEmoji":"🐰","coupleId":null,"role":"user","disabled":false,"createdAt":1791941055688},…
+✅ PATCH /api/auth/me 不带字段 → 400 invalid_input
+      HTTP 400 {"error":"invalid_input","message":"请至少提供 nickname 或 avatarEmoji","serverTime":1791941058542}
+✅ 改密码时原密码错误 → 401 unauthorized
+      HTTP 401 {"error":"unauthorized","message":"原密码错误","serverTime":1791941058880}
+✅ 改密码成功 → {ok:true}
+      HTTP 200 {"ok":true,"serverTime":1791941059258}
+✅ 用新密码可以登录
+      HTTP 200 {"token":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1X212N2Zmcm5zcHI5YjBqbiIsInVzZXJuYW1lIjoiYWxpY2VtdmlrNjQ3OTEiLCJyb2xlIjoidXNlciIsInR5cCI6InVzZXIiLCJpYXQiOjE3OTE5NDEwNTksI…
+✅ 旧密码已失效
+      HTTP 401 {"error":"unauthorized","message":"用户名或密码错误","serverTime":1791941060042}
+
+── 情侣关系（API.md §3） ─────────────────────────────────────────────
+✅ 注册第二个用户
+      HTTP 200
+✅ 创建情侣空间，返回 6 位 inviteCode 与 members
+      HTTP 200 {"couple":{"id":"c_mv7ffvi1j9pub3g","inviteCode":"CLZ59R","togetherDate":null,"anniversaryTitle":"在一起","members":[{"id":"u_mv7ffrnspr9b0jn","username":"alicemvik64791","nickn…
+✅ 已绑定再创建 → 409 conflict
+      HTTP 409 {"error":"conflict","message":"你已经有情侣空间了","serverTime":1791941060999}
+✅ 无效邀请码 → 404 not_found
+      HTTP 404 {"error":"not_found","message":"邀请码无效","serverTime":1791941061290}
+✅ 用邀请码加入（大小写不敏感），members 含双方完整 user 对象
+      HTTP 200 {"couple":{"id":"c_mv7ffvi1j9pub3g","inviteCode":"CLZ59R","togetherDate":null,"anniversaryTitle":"在一起","members":[{"id":"u_mv7ffrnspr9b0jn","username":"alicemvik64791","nickn…
+✅ 空间已满（2 人）→ 409 conflict
+      HTTP 409 {"error":"conflict","message":"该情侣空间已满","serverTime":1791941062336}
+✅ 注册时带已满邀请码 → 409 conflict
+      HTTP 409 {"error":"conflict","message":"该情侣空间已满","serverTime":1791941062645}
+✅ GET /api/couple 返回双方
+      HTTP 200 {"couple":{"id":"c_mv7ffvi1j9pub3g","inviteCode":"CLZ59R","togetherDate":null,"anniversaryTitle":"在一起","members":[{"id":"u_mv7ffrnspr9b0jn","username":"alicemvik64791","nickn…
+✅ PATCH /api/couple 改在一起日期
+      HTTP 200 {"couple":{"id":"c_mv7ffvi1j9pub3g","inviteCode":"CLZ59R","togetherDate":1700000000000,"anniversaryTitle":"在一起","members":[{"id":"u_mv7ffrnspr9b0jn","username":"alicemvik6479…
+✅ togetherDate 非整数 → 400 invalid_input
+      HTTP 400 {"error":"invalid_input","message":"togetherDate 必须是整数毫秒时间戳","serverTime":1791941063642}
+✅ PATCH /api/couple 空请求体 → 400 invalid_input
+      HTTP 400 {"error":"invalid_input","message":"请至少提供 togetherDate 或 anniversaryTitle","serverTime":1791941063923}
+✅ 未绑定访问 /api/couple → 403 forbidden
+      HTTP 403 {"error":"forbidden","message":"尚未绑定情侣关系","serverTime":1791941064190}
+
+── 数据同步（API.md §4） ─────────────────────────────────────────────
+✅ push 两个对象成功，返回 applied/conflicts/serverTime
+      HTTP 200 {"applied":["w_mvik64791_1","pet"],"conflicts":[],"serverTime":1791941064483}
+✅ push ledger → 400 invalid_input（只存手机本地）
+      HTTP 400 {"error":"invalid_input","message":"kind \"ledger\" 不参与服务端同步：记账数据与密码本只保存在手机本地，服务端不接收、不存储。","serverTime":17…
+✅ push vault → 400 invalid_input
+      HTTP 400 {"error":"invalid_input","message":"kind \"vault\" 不参与服务端同步：记账数据与密码本只保存在手机本地，服务端不接收、不存储。","serverTime":179…
+✅ pull kinds=ledger → 400 invalid_input
+      HTTP 400 {"error":"invalid_input","message":"kind \"ledger\" 不参与服务端同步：记账数据与密码本只保存在手机本地，服务端不接收。","serverTime":1791941065412}
+✅ push 未知 kind → 400 invalid_input
+      HTTP 400 {"error":"invalid_input","message":"objects[0].kind 不在允许列表中，仅支持：spark、pet、checkin、wish、worklog、settings","serverTime":1791941065779}
+✅ push 空数组 → 400 invalid_input
+      HTTP 400 {"error":"invalid_input","message":"objects 不能为空数组","serverTime":1791941066116}
+✅ push 超过 200 个对象 → 400 invalid_input
+      HTTP 400 {"error":"invalid_input","message":"单次最多推送 200 个对象，当前 201 个","serverTime":1791941066398}
+✅ LWW：更旧的 updatedAt 被拒并进 conflicts
+      HTTP 200 {"applied":[],"conflicts":["w_mvik64791_1"],"serverTime":1791941066650}
+✅ LWW：更新的 updatedAt 被接受
+      HTTP 200 {"applied":["w_mvik64791_1"],"conflicts":[],"serverTime":1791941066912}
+✅ pull 返回 objects（含 kind/id/updatedAt/deleted/ownerId/updatedBy/payload）与 hasMore
+      HTTP 200 {"objects":[{"kind":"pet","id":"pet","updatedAt":1735000001000,"deleted":false,"ownerId":"u_mv7ffrnspr9b0jn","updatedBy":"u_mv7ffrnspr9b0jn","payload":{"level":3}},{"kind":"wish","…
+✅ pull kinds=pet 只返回 pet
+      HTTP 200 {"objects":[{"kind":"pet","id":"pet","updatedAt":1735000001000,"deleted":false,"ownerId":"u_mv7ffrnspr9b0jn","updatedBy":"u_mv7ffrnspr9b0jn","payload":{"level":3}}],"hasMore":false…
+✅ pull 非法 kinds → 400 invalid_input
+      HTTP 400 {"error":"invalid_input","message":"kinds 包含不支持的取值：nope，仅支持：spark、pet、checkin、wish、worklog、settings","serverTime":1791941067722}
+✅ pull limit 超过 1000 → 400 invalid_input
+      HTTP 400 {"error":"invalid_input","message":"limit 不能大于 1000","serverTime":1791941068028}
+✅ 未绑定 push → 403 forbidden
+      HTTP 403 {"error":"forbidden","message":"尚未绑定情侣关系","serverTime":1791941068276}
+
+── 聊天（API.md §5） ───────────────────────────────────────────────
+✅ 发送消息，消息字段与 API.md 一致
+      HTTP 200 {"message":{"id":"m_mv7fg1ktpcwh9gr","clientId":"c_mvik64791_1","coupleId":"c_mv7ffvi1j9pub3g","senderId":"u_mv7ffrnspr9b0jn","kind":"text","body":"晚安","meta":null,"createdAt":…
+✅ clientId 幂等：重复提交返回同一条消息
+      HTTP 200 {"message":{"id":"m_mv7fg1ktpcwh9gr","clientId":"c_mvik64791_1","coupleId":"c_mv7ffvi1j9pub3g","senderId":"u_mv7ffrnspr9b0jn","kind":"text","body":"晚安","meta":null,"createdAt":…
+✅ emoji 消息可带 meta 对象
+      HTTP 200 {"message":{"id":"m_mv7fg1zospo8v2s","clientId":"c_mvik64791_2","coupleId":"c_mv7ffvi1j9pub3g","senderId":"u_mv7ffvacb8hdww8","kind":"emoji","body":"unicode:😀","meta":{"w":240,"…
+✅ emoji 消息 body 格式不对 → 400 invalid_input
+      HTTP 400 {"error":"invalid_input","message":"emoji 类型消息的 body 必须是 \"item:<表情id>\" 或 \"unicode:<emoji>\" 格式","serverTime":1791941069448}
+✅ 客户端不能直接发 system 消息 → 400 invalid_input
+      HTTP 400 {"error":"invalid_input","message":"system 类型消息由服务端生成，客户端不能直接发送","serverTime":1791941069815}
+✅ body 超过 2000 字符 → 400 invalid_input
+      HTTP 400 {"error":"invalid_input","message":"body 长度不能超过 2000 个字符","serverTime":1791941070256}
+✅ body 恰好 2000 字符 → 允许
+      HTTP 200 {"message":{"id":"m_mv7fg341ihypsfz","clientId":"c_mvik64791_6","coupleId":"c_mv7ffvi1j9pub3g","senderId":"u_mv7ffvacb8hdww8","kind":"text","body":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb…
+✅ 未绑定发消息 → 403 forbidden
+      HTTP 403 {"error":"forbidden","message":"尚未绑定情侣关系","serverTime":1791941070816}
+✅ 消息列表按 createdAt 升序返回，带 hasMore
+      4 条
+✅ before 分页可用
+      HTTP 200 {"messages":[],"hasMore":false,"serverTime":1791941071384}
+✅ 未绑定拉消息 → 403 forbidden
+      HTTP 403 {"error":"forbidden","message":"尚未绑定情侣关系","serverTime":1791941071636}
+✅ 标记已读返回 {ok:true,count}
+      HTTP 200 {"ok":true,"count":2,"serverTime":1791941071890}
+✅ 已读状态落库（readAt 非空）
+      readAt 已写入
+✅ 撤回不存在的消息 → 404 not_found
+      HTTP 404 {"error":"not_found","message":"消息不存在","serverTime":1791941072397}
+✅ 撤回别人的消息 → 403 forbidden
+      HTTP 403 {"error":"forbidden","message":"只能撤回自己发送的消息","serverTime":1791941072656}
+✅ 撤回自己的消息（24h 内）→ {ok:true}
+      HTTP 200 {"ok":true,"serverTime":1791941072931}
+✅ 重复撤回幂等返回 {ok:true}
+      HTTP 200 {"ok":true,"serverTime":1791941073180}
+✅ 超过 24 小时的消息撤回 → 403 forbidden
+      HTTP 403 {"error":"forbidden","message":"超过 24 小时的消息不能撤回","serverTime":1791941073723}
+
+── 表情包（API.md §6） ──────────────────────────────────────────────
+✅ 创建表情包，返回 pack（items 为空数组）
+      HTTP 200 {"pack":{"id":"p_mv7fg5spz5u318y","name":"我的表情","ownerId":"u_mv7ffrnspr9b0jn","isPublic":false,"createdAt":1791941074009,"updatedAt":1791941074009,"items":[]},"serverTime":…
+✅ 上传真实最小 PNG（base64），返回 item（url = /api/emoji/blob/<id>）
+      HTTP 200 {"item":{"id":"e_mv7fg602l6f3oyz","packId":"p_mv7fg5spz5u318y","ownerId":"u_mv7ffrnspr9b0jn","mime":"image/png","size":73,"name":"大笑","url":"/api/emoji/blob/e_mv7fg602l6f3oyz",…
+✅ 伪造图片内容（magic bytes 不符）→ 400 invalid_input
+      HTTP 400 {"error":"invalid_input","message":"文件内容不是受支持的图片格式（仅支持 JPEG / PNG / GIF / WEBP）","serverTime":1791941074674}
+✅ 声明 mime 与实际格式不一致 → 400 invalid_input
+      HTTP 400 {"error":"invalid_input","message":"声明的 mime（image/jpeg）与图片实际格式（image/png）不一致","serverTime":1791941075013}
+✅ mime 不在白名单 → 400 invalid_input
+      HTTP 400 {"error":"invalid_input","message":"mime 不在白名单内，仅支持：image/jpeg、image/png、image/gif、image/webp","serverTime":1791941075290}
+✅ dataBase64 非法 → 400 invalid_input
+      HTTP 400 {"error":"invalid_input","message":"dataBase64 不是合法的 base64 数据","serverTime":1791941075625}
+✅ 伴侣能看到对方的表情包与表情（同空间可见）
+      HTTP 200 {"packs":[{"id":"p_mv7fg5spz5u318y","name":"我的表情","ownerId":"u_mv7ffrnspr9b0jn","isPublic":false,"createdAt":1791941074009,"updatedAt":1791941074275,"items":[{"id":"e_mv7fg…
+✅ 伴侣可以往同一个包里上传表情
+      HTTP 200 {"item":{"id":"e_mv7fg7i8aeq0k3q","packId":"p_mv7fg5spz5u318y","ownerId":"u_mv7ffvacb8hdww8","mime":"image/png","size":73,"name":"","url":"/api/emoji/blob/e_mv7fg7i8aeq0k3q","creat…
+✅ blob 返回原图二进制且 Content-Type 为 image/png
+      HTTP 200 content-type=image/png bytes=73
+✅ blob 带 Cache-Control: public, max-age=31536000, immutable
+      public, max-age=31536000, immutable
+✅ blob 支持 ?token=<jwt> 鉴权（供 iOS AsyncImage）
+      HTTP 200
+✅ blob 无凭证 → 401 unauthorized
+      HTTP 401
+✅ 旁观者访问该表情 blob → 403 forbidden
+      HTTP 403
+✅ 路径穿越（e_..%2F..%2Fwp-config）被拒（400/403/404，绝不 200）
+      DELETE=400 / query形式=404 / blob=400
+✅ 删除他人上传的表情 → 403 forbidden
+      HTTP 403 {"error":"forbidden","message":"只能删除自己上传的表情","serverTime":1791941078746}
+✅ 删除不存在的表情 → 404 not_found
+      HTTP 404 {"error":"not_found","message":"表情不存在","serverTime":1791941079021}
+✅ 表情 id 不符合 ^e_[A-Za-z0-9]+$ → 400 invalid_input
+      HTTP 400 {"error":"invalid_input","message":"表情 id 格式不正确（应形如 e_xxxxx）","serverTime":1791941079288}
+✅ 删除自己上传的表情 → {ok:true}
+      HTTP 200 {"ok":true,"serverTime":1791941079535}
+✅ 删掉后 blob → 404 not_found
+      HTTP 404
+✅ 删除伴侣创建的表情包 → 403 forbidden
+      HTTP 403 {"error":"forbidden","message":"只能删除自己创建的表情包","serverTime":1791941080366}
+✅ 删除不存在的表情包 → 404 not_found
+      HTTP 404 {"error":"not_found","message":"表情包不存在","serverTime":1791941080634}
+✅ 删除自己创建的表情包 → {ok:true}
+      HTTP 200 {"ok":true,"serverTime":1791941080908}
+✅ GIF 也可上传（magic bytes 识别为 image/gif）
+      HTTP 200 {"item":{"id":"e_mv7fgbbm3pexk6s","packId":"p_mv7fg5spz5u318y","ownerId":"u_mv7ffrnspr9b0jn","mime":"image/gif","size":37,"name":"gif","url":"/api/emoji/blob/e_mv7fgbbm3pexk6s","cr…
+✅ 表情图片存放在 wp-content/uploads/couple-emoji/
+      C:/Users/Tage-HongDou/AppData/Local/wp-test/wordpress/wp-content/uploads/couple-emoji
+
+── AI（API.md §7） ───────────────────────────────────────────────
+✅ GET /api/ai/status 字段与 API.md 一致
+      HTTP 200 {"enabled":true,"configured":false,"model":"deepseek-chat","dailyLimit":200,"usedToday":0,"serverTime":1791941081829}
+✅ 未配置 Key → 403 forbidden「AI 未配置」（不是 500）
+      HTTP 403 {"error":"forbidden","message":"AI 未配置","serverTime":1791941082124}
+✅ parse-ledger text 为空 → 400 invalid_input
+      HTTP 400 {"error":"invalid_input","message":"text 长度不能少于 1 个字符","serverTime":1791941082397}
+✅ parse-ledger text 超过 2000 → 400 invalid_input
+      HTTP 400 {"error":"invalid_input","message":"text 长度不能超过 2000 个字符","serverTime":1791941082655}
+✅ parse-ledger today 非法日期 → 400 invalid_input
+      HTTP 400 {"error":"invalid_input","message":"today 不是有效日期","serverTime":1791941082948}
+✅ monthly-report month 格式错 → 400 invalid_input
+      HTTP 400 {"error":"invalid_input","message":"month 格式必须是 YYYY-MM","serverTime":1791941083196}
+✅ monthly-report totals 非对象 → 400 invalid_input
+      HTTP 400 {"error":"invalid_input","message":"totals 必须是 JSON 对象","serverTime":1791941083444}
+✅ monthly-report 负数 → 400 invalid_input
+      HTTP 400 {"error":"invalid_input","message":"totals.expense 必须是非负数字","serverTime":1791941083697}
+✅ DeepSeek 调用使用 wp_remote_post（未引入第三方库）
+      wp_remote_post
+
+── App 后台接口（API.md §9） ─────────────────────────────────────────
+✅ 后台接口未授权一律 401 unauthorized
+      /admin/api/settings=401 /admin/api/settings=401 /admin/api/stats=401 /admin/api/users=401 /admin/api/packs=401 /admin/api/logs=401 /admin/api/system=401 /admin/api/ai/test=401
+✅ 后台登录成功返回 admin token
+      HTTP 200 {"token":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0eXAiOiJhZG1pbiIsInJvbGUiOiJhZG1pbiIsImlhdCI6MTc5MTk0MTA4NiwiZXhwIjoxNzkxOTg0Mjg2fQ.OrhYW_gD23MhLQBQQzGmhQLYd1wFnoAmgEPzgqVbm-o","… rl=9 hashLen=62
+✅ 后台密码错误 → 401 unauthorized
+      HTTP 401 {"error":"unauthorized","message":"密码错误","serverTime":1791941086809}
+✅ GET /admin/api/settings 返回全部字段（与 API.md §9 一致）
+      HTTP 200 {"deepseekApiKeyMasked":"","deepseekApiKeyConfigured":false,"adminPasswordInDatabase":true,"adminPasswordSource":"database","deepseekBaseUrl":"https://api.deepseek.com","deepseekMo…
+✅ PUT /admin/api/settings 写入设置并回吐 settings
+      HTTP 200 {"ok":true,"settings":{"deepseekApiKeyMasked":"sk-************abcd","deepseekApiKeyConfigured":true,"adminPasswordInDatabase":true,"adminPasswordSource":"database","deepseekBaseUrl…
+✅ PUT 响应里不含 DeepSeek Key 明文
+      已检查响应体 492 字节
+✅ Key 只返回掩码，其余设置已生效
+      masked=sk-************abcd
+✅ 响应里不含后台密码哈希
+      哈希长度 62
+✅ DeepSeek Key 以 AES-256-GCM 密文入库（enc:v1: 前缀）
+      "enc:v1:n\/R02GQhdKf83B9...
+✅ 关闭注册后 settings.registerOpen=false
+      HTTP 200 {"ok":true,"settings":{"deepseekApiKeyMasked":"sk-************abcd","deepseekApiKeyConfigured":true,"adminPasswordInDatabase":true,"adminPasswordSource":"database","deepseekBaseUrl…
+✅ 关闭注册后注册 → 403 forbidden
+      HTTP 403 {"error":"forbidden","message":"当前已关闭注册","serverTime":1791941088139}
+✅ PUT /admin/api/settings 空请求体 → 400 invalid_input
+      HTTP 400 {"error":"invalid_input","message":"请求体不能为空","serverTime":1791941088793}
+✅ POST /admin/api/ai/test 返回受控结果（未配置 Key 时 403 forbidden）
+      HTTP 403 {"error":"forbidden","message":"DeepSeek API Key 无效或无权限","serverTime":1791941089431}
+✅ AI 测试支持临时 Key（失败也是受控错误）
+      HTTP 403 {"error":"forbidden","message":"DeepSeek API Key 无效或无权限","serverTime":1791941090039}
+✅ GET /admin/api/stats 返回用户/情侣/消息/AI/磁盘占用
+      HTTP 200 {"users":5,"couples":1,"couplesTotal":1,"messages":5,"aiToday":0,"aiTotal":0,"packs":1,"items":2,"syncObjects":2,"disk":{"dbBytes":1228800,"emojiBytes":990,"emojiFiles":18,"totalBy…
+✅ GET /admin/api/users 搜索用户
+      HTTP 200 {"total":1,"page":1,"pageSize":20,"users":[{"id":"u_mv7ffrnspr9b0jn","username":"alicemvik64791","nickname":"新昵称","avatarEmoji":"🐰","coupleId":"c_mv7ffvi1j9pub3g","role":"…
+✅ GET /admin/api/packs 返回表情包统计
+      HTTP 200 {"totalPacks":1,"totalItems":2,"emojiBytes":990,"emojiFiles":18,"maxPacksPerCouple":30,"maxItemsPerPack":200,"maxItemBytes":1048576,"serverTime":1791941090869}
+✅ 创建用于用户管理动作的账号
+      id=u_mv7fgj21wdzo2nl
+✅ 重置用户密码 → {ok:true}
+      HTTP 200 {"ok":true,"serverTime":1791941091551}
+✅ 重置后的新密码可以登录
+      HTTP 200
+✅ 禁用用户 → user.disabled=true
+      HTTP 200 {"ok":true,"user":{"id":"u_mv7fgj21wdzo2nl","username":"targetmvik64791","nickname":"targetmvik64791","avatarEmoji":"","coupleId":null,"role":"user","disabled":true,"createdAt":179…
+✅ 被禁用账号登录 → 403 forbidden
+      HTTP 403 {"error":"forbidden","message":"账号已被禁用，请联系管理员","serverTime":1791941092685}
+✅ 启用用户 → user.disabled=false
+      HTTP 200 {"ok":true,"user":{"id":"u_mv7fgj21wdzo2nl","username":"targetmvik64791","nickname":"targetmvik64791","avatarEmoji":"","coupleId":null,"role":"user","disabled":false,"createdAt":17…
+✅ toggle-disabled 非布尔 → 400 invalid_input
+      HTTP 400 {"error":"invalid_input","message":"disabled 必须是布尔值","serverTime":1791941093284}
+✅ 对不存在用户重置密码 → 404 not_found
+      HTTP 404 {"error":"not_found","message":"用户不存在","serverTime":1791941093574}
+✅ 删除用户 → {ok:true}
+      HTTP 200 {"ok":true,"serverTime":1791941093854}
+✅ 再次删除同一用户 → 404 not_found
+      HTTP 404 {"error":"not_found","message":"用户不存在","serverTime":1791941094151}
+✅ 改后台密码时当前密码错 → 401 unauthorized
+      HTTP 401 {"error":"unauthorized","message":"当前密码错误","serverTime":1791941094526}
+✅ 修改后台密码成功（存入数据库，返回 adminPasswordSource=database）
+      HTTP 200 {"ok":true,"message":"后台密码已修改，当前登录仍然有效","adminPasswordInDatabase":true,"adminPasswordSource":"database","serverTime":1791941094963}
+✅ 改密码响应里不含明文/哈希
+      已检查响应体
+✅ 改完密码后旧后台密码失效
+      HTTP 401 {"error":"unauthorized","message":"密码错误","serverTime":1791941095289}
+✅ 用新后台密码登录成功
+      HTTP 200 {"token":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0eXAiOiJhZG1pbiIsInJvbGUiOiJhZG1pbiIsImlhdCI6MTc5MTk0MTA5NSwiZXhwIjoxNzkxOTg0Mjk1fQ.73-KJ7AvTkpfljbs1WyMUkN2FEpt-PZVcJUIzxU9eog","…
+✅ GET /admin/api/logs 记录了设置变更/用户管理/改密码等操作
+      17 条日志
+✅ WP-CLI / 代码路径可设置后台密码哈希（admin_password_source=database）
+      database
+✅ 重置回测试密码后可以登录
+      HTTP 200 {"token":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0eXAiOiJhZG1pbiIsInJvbGUiOiJhZG1pbiIsImlhdCI6MTc5MTk0MTA5NiwiZXhwIjoxNzkxOTg0Mjk2fQ.jbVDFNWcftfFGRPQyzHSIFbH7xj9QFHbzofIJpBlibo","…
+✅ GET /admin/api/system 含数据库信息、WebSocket 不支持说明与 App 服务器地址
+      HTTP 200 {"php":"8.3.35","platform":"WINNT AMD64","sapi":"cli-server","pid":14576,"uptimeSeconds":0,"memoryBytes":37748736,"wsRunning":false,"wsOnline":0,"websocket":{"supported":false,"not…
+
+── 通用错误与安全 ─────────────────────────────────────────────────────
+✅ 未知路径 → 404 not_found
+      HTTP 404 {"error":"not_found","message":"接口不存在：GET /api/definitely-not-a-route","serverTime":1791941097379}
+✅ 未知 POST 路径 → 404 not_found
+      HTTP 404 {"error":"not_found","message":"接口不存在：POST /api/auth/nope","serverTime":1791941097644}
+✅ 无 token → 401 unauthorized
+      HTTP 401 {"error":"unauthorized","message":"缺少登录凭证","serverTime":1791941097934}
+✅ 非法 token → 401 unauthorized
+      HTTP 401 {"error":"unauthorized","message":"登录已过期，请重新登录","serverTime":1791941098200}
+✅ 非法 JSON 请求体 → 400 invalid_input
+      HTTP 400 {"error":"invalid_input","message":"请求体不是合法的 JSON","serverTime":1791941098
+✅ 方法不匹配 → 404 not_found
+      HTTP 404 {"error":"not_found","message":"接口不存在：DELETE /api/health","serverTime":1791941098933}
+✅ 接口响应带 Cache-Control: no-store
+      no-store
+✅ 公开接口不泄漏后台密码与密码哈希
+      未发现泄漏
+
+── 解绑（API.md §3） ───────────────────────────────────────────────
+✅ 解绑 → {ok:true}
+      HTTP 200 {"ok":true,"serverTime":1791941100644}
+✅ 解绑后双方 coupleId 置空
+      HTTP 200 {"user":{"id":"u_mv7ffrnspr9b0jn","username":"alicemvik64791","nickname":"新昵称","avatarEmoji":"🐰","coupleId":null,"role":"user","disabled":false,"createdAt":1791941055688},…
+✅ 伴侣的 coupleId 也置空
+      HTTP 200 {"user":{"id":"u_mv7ffvacb8hdww8","username":"bobmvik64791","nickname":"小明","avatarEmoji":"","coupleId":null,"role":"user","disabled":false,"createdAt":1791941060388},"couple":…
+✅ 解绑后原邀请码失效 → 404 not_found
+      HTTP 404 {"error":"not_found","message":"邀请码无效","serverTime":1791941101467}
+✅ 解绑后聊天 → 403 forbidden
+      HTTP 403 {"error":"forbidden","message":"尚未绑定情侣关系","serverTime":1791941101722}
+✅ 解绑后可以重新创建情侣空间
+      HTTP 200 {"couple":{"id":"c_mv7fgrdzigo67p2","inviteCode":"FFK5DL","togetherDate":null,"anniversaryTitle":"在一起","members":[{"id":"u_mv7ffrnspr9b0jn","username":"alicemvik64791","nickn…
+═══════════════════════════════════════════════════════════════
+
+通过：166 项
+失败：0 项
+合计：166 项
+结果：✅ 全部通过
