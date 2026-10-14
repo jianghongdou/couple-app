@@ -293,8 +293,8 @@ struct ChatView: View {
 
     private var aiChatBody: some View {
         Group {
-            if let guidance = ai.guidanceText, !guidance.isEmpty {
-                aiPlaceholder(icon: "🤖", title: "AI 聊天暂不可用", message: guidance, showRetry: false)
+            if !ai.guidanceText.isEmpty {
+                aiPlaceholder(icon: "🤖", title: "AI 聊天暂不可用", message: ai.guidanceText, showRetry: false)
             } else if ai.needsProviderHint {
                 aiPlaceholder(
                     icon: "🛠️",

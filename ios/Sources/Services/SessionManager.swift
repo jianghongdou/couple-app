@@ -254,7 +254,7 @@ final class SessionManager: ObservableObject {
 
     func logout() {
         ChatService.shared.stop()
-        AIChatService.shared.reset()
+        Task { @MainActor in AIChatService.shared.reset() }   // AIChatService 是 @MainActor，跨隔离调用需要切回主线程
         SyncEngine.shared.stopAutoSync()
         LiveActivityController.shared.stop()
         DeviceConfig.shared.clearAccount()
@@ -267,7 +267,7 @@ final class SessionManager: ObservableObject {
 
     func forceLogout(reason: String) {
         ChatService.shared.stop()
-        AIChatService.shared.reset()
+        Task { @MainActor in AIChatService.shared.reset() }   // 同上：切回主线程再重置 AI 会话状态
         SyncEngine.shared.stopAutoSync()
         DeviceConfig.shared.clearAccount()
         user = nil
