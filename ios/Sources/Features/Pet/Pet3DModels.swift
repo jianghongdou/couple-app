@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI      // ColorScheme（Pet3DBrightness 初始化用）
 import UIKit
 import SceneKit
 
@@ -7,7 +8,7 @@ import SceneKit
 /// 物种造型风格。
 /// 9 种宠物共用同一套「三头身」骨架，只替换耳朵 / 尾巴 / 嘴鼻 / 附加部件的形态与配色。
 /// 注意：全部是纯代码参数，不依赖任何图片或模型资源。
-struct PetSpeciesStyle {
+struct PetSpeciesStyle: Equatable {
     /// 耳朵形状
     enum EarStyle {
         case pointy     // 三角尖耳（奶猫）
@@ -167,7 +168,7 @@ struct PetSpeciesStyle {
 
 // MARK: - 成长阶段（等级 → 体型比例 / 颜色深浅）
 
-struct PetGrowthStage {
+struct PetGrowthStage: Equatable {
     var title: String
     /// 整体缩放
     var sizeScale: CGFloat

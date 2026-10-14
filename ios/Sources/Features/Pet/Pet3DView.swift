@@ -22,7 +22,8 @@ struct Pet3DView: View {
     let pet: PetState
     /// 点一下宠物的回调
     var onReaction: (() -> Void)?
-    /// 手指拖动回调：(水平位移, 垂直位移)，单位是点（可选）    var onDrag: ((CGFloat, CGFloat) -> Void)?
+    /// 手指拖动回调：(水平位移, 垂直位移)，单位是点（可选）
+    var onDrag: ((CGFloat, CGFloat) -> Void)?
     /// 由外部按钮触发的动作（喂食 / 陪玩 / 睡觉）
     var action: Pet3DAction = .none
 

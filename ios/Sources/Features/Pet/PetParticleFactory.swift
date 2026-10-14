@@ -64,7 +64,9 @@ enum Pet3DParticleFactory {
         system.blendMode = .alpha
         system.isAffectedByGravity = false
         system.particleImage = zImage()
-        system.birthLocation = .sphere
+        // 出生位置只能在 surface / volume / vertex / free 里选（SceneKit 没有 .sphere）；
+        // 没有设置 emitterShape 时两者都是从节点原点发射，这里用最保守的 .surface。
+        system.birthLocation = .surface
         system.birthDirection = .constant
         return system
     }
@@ -98,32 +100,38 @@ enum Pet3DParticleFactory {
 
     // MARK: - 挂载 helper
 
+    /// 特效挂载节点的名字。
+    /// 注意：`SCNParticleSystem` 没有 `name` 属性（不能拿它当标签），
+    /// 所以统一用一个具名空节点当挂载点，靠节点名来区分不同特效。
+    private static func holderName(_ tag: String) -> String { "pet3d.fx.\(tag)" }
+
+    private static func holder(on node: SCNNode, tag: String) -> SCNNode? {
+        node.childNode(withName: holderName(tag), recursively: false)
+    }
+
     /// 在节点上播一次「爆发型」特效。
-    /// 每次都换一个新的 system，避免重复 addParticleSystem 累积、也避免旧系统继续发射。
+    /// 每次都换一个新的挂载节点，避免重复 addParticleSystem 累积、也避免旧系统继续发射。
     static func burst(_ make: () -> SCNParticleSystem, on node: SCNNode, tag: String) {
-        for system in node.particleSystems ?? [] where system.name == tag {
-            node.removeParticleSystem(system)
-        }
-        let system = make()
-        system.name = tag
-        node.addParticleSystem(system)
+        holder(on: node, tag: tag)?.removeFromParentNode()
+        let mount = SCNNode()
+        mount.name = holderName(tag)
+        mount.addParticleSystem(make())
+        node.addChildNode(mount)
     }
 
     /// 持续型特效（Zzz）：挂上就一直循环
     static func attachLoop(_ system: SCNParticleSystem, on node: SCNNode, tag: String) {
-        for existing in node.particleSystems ?? [] where existing.name == tag {
-            return
-        }
-        system.name = tag
+        guard holder(on: node, tag: tag) == nil else { return }
         system.loops = true
-        node.addParticleSystem(system)
+        let mount = SCNNode()
+        mount.name = holderName(tag)
+        mount.addParticleSystem(system)
+        node.addChildNode(mount)
     }
 
     /// 移除某个持续型特效
     static func stopLoop(on node: SCNNode, tag: String) {
-        for system in node.particleSystems ?? [] where system.name == tag {
-            node.removeParticleSystem(system)
-        }
+        holder(on: node, tag: tag)?.removeFromParentNode()
     }
 
     // MARK: - 用 Core Graphics 画粒子贴图（不是资源文件）

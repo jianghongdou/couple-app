@@ -129,10 +129,18 @@ final class Pet3DBuilder {
     func build() -> Result {
         let scene = SCNScene()
 
-        scene.rootNode.addChildNode(makeAmbientLight())
-        scene.rootNode.addChildNode(makeKeyLight())
-        scene.rootNode.addChildNode(makeFillLight())
-        scene.rootNode.addChildNode(makeGround())
+        // 灯光与地面同样注册进 nodes：深浅色切换时控制器是靠 partDict 取它们改强度 / 颜色的
+        let ambientLight = makeAmbientLight()
+        let keyLight = makeKeyLight()
+        let fillLight = makeFillLight()
+        let ground = makeGround()
+        for node in [ambientLight, keyLight, fillLight, ground] {
+            register(node)
+        }
+        scene.rootNode.addChildNode(ambientLight)
+        scene.rootNode.addChildNode(keyLight)
+        scene.rootNode.addChildNode(fillLight)
+        scene.rootNode.addChildNode(ground)
 
         let cameraRig = makeCameraRig()
         scene.rootNode.addChildNode(cameraRig.pivot)
@@ -255,9 +263,11 @@ final class Pet3DBuilder {
         let scaleGroup = SCNNode()
         scaleGroup.name = "pet3d.scale"
         scaleGroup.scale = Pet3DMath.vec(sizeScale, sizeScale, sizeScale)
+        register(scaleGroup)
 
         let bodyGroup = SCNNode()
         bodyGroup.name = Pet3DPart.body
+        register(bodyGroup)
         let bodyCenterY = bodyHeight
         // 把 pivot 放到身体中心，这样呼吸缩放是从肚子往两边撑
         bodyGroup.pivot = Pet3DMath.translation(0, bodyCenterY, 0)
@@ -279,6 +289,7 @@ final class Pet3DBuilder {
         let spin = SCNNode()
         spin.name = Pet3DPart.spin
         spin.addChildNode(base)
+        register(spin)
 
         let pet = SCNNode()
         pet.name = Pet3DPart.pet
@@ -446,7 +457,7 @@ final class Pet3DBuilder {
         var currentRadius = dimensions.radius
         let root = SCNNode()
         var parent = root
-        var nodeName = "pet3d.tail.seg"
+        let nodeName = "pet3d.tail.seg"
 
         for index in 0..<dimensions.count {
             let segment = SCNNode(geometry: Pet3DGeometry.sphere(radius: currentRadius, segments: 16))

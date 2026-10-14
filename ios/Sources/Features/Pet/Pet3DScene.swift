@@ -118,11 +118,10 @@ final class Pet3DController: ObservableObject {
         if old.isDark != newValue.isDark {
             applyBrightness()
         }
-        if old.stage.sizeScale != newValue.stage.sizeScale
-            || old.stage.headToBody != newValue.stage.headToBody
-            || old.stage.colorLighten != newValue.stage.colorLighten
-            || old.style.bodyColor != newValue.style.bodyColor
-            || old.style.speciesKey != newValue.style.speciesKey {
+        // 成长阶段 / 物种造型任一变化就重算比例与配色。
+        // PetGrowthStage 与 PetSpeciesStyle 都是 Equatable，整体比较即可，
+        // 不用逐字段比对，也不再引用不存在的 style.speciesKey。
+        if old.stage != newValue.stage || old.style != newValue.style {
             builder.applyStage(newValue.stage)
             builder.applyStyle(newValue.style)
             currentStyle = newValue.style
@@ -228,7 +227,7 @@ final class Pet3DController: ObservableObject {
                 eyes.removeAction(forKey: "blinkLoop")
                 for anchor in eyes.childNodes {
                     anchor.scale = Pet3DMath.vec(1.0, 1.0, 1.0)
-                    anchor.runAction(SCNAction.scaleY(to: 0.07, duration: 0.30), forKey: "blink")
+                    anchor.runAction(Pet3DController.blinkScaleY(from: 1.0, to: 0.07, duration: 0.30), forKey: "blink")
                 }
             } else {
                 // 醒来：先清掉旧的眨眼循环，否则 startBlinking 的「已有循环」判断会拦住重启
@@ -335,14 +334,29 @@ final class Pet3DController: ObservableObject {
         }
     }
 
+    /// 只沿 Y 轴缩放的眨眼动作。
+    /// SceneKit 的 `SCNAction` 没有 `scaleY`（只有整体的 `scale(to:duration:)`），
+    /// 这里用 `customAction` 手写插值：只压扁眼睛自身的 Y 轴，不动 X / Z。
+    private static func blinkScaleY(from base: CGFloat, to target: CGFloat, duration: TimeInterval) -> SCNAction {
+        SCNAction.customAction(duration: duration) { (node: SCNNode, elapsed: CGFloat) in
+            let progress: CGFloat = duration > 0 ? elapsed / CGFloat(duration) : 1
+            let t = max(0, min(1, progress))
+            var scale = node.scale
+            scale.y = Float(base + (target - base) * t)
+            node.scale = scale
+        }
+    }
+
     /// 随机眨眼：间隔随机，心情越好眨得越勤
     private func startBlinking() {
         guard !effectiveMood.isSleeping else { return }
         guard let eyes = partDict[Pet3DPart.eyes] else { return }
         guard eyes.action(forKey: "blinkLoop") == nil else { return }
         let delay = Double.random(in: 1.4...max(2.0, effectiveMood.blinkDelay))
-        let close = SCNAction.scaleY(to: 0.08, duration: 0.07)
-        let open = SCNAction.scaleY(to: 1.0, duration: 0.11)
+        // 眨眼是作用在 eyes 容器上的（applyMood 里已经把容器的 scale 复位成 1），
+        // 心情决定的「眼睛大小」在各自的 anchor 上，两者互不干扰。
+        let close = Pet3DController.blinkScaleY(from: 1.0, to: 0.10, duration: 0.07)
+        let open = Pet3DController.blinkScaleY(from: 0.10, to: 1.0, duration: 0.11)
         open.timingMode = .easeOut
         let cycle = SCNAction.sequence([close, open, SCNAction.wait(duration: delay)])
         let loop = SCNAction.repeatForever(cycle)

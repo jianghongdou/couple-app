@@ -392,3 +392,10 @@
 | `LOG_LEVEL` | info | 日志级别 |
 
 数据库表：`users`、`couples`、`messages`、`emoji_packs`、`emoji_items`、`sync_objects`、`settings`、`ai_usage`、`admin_logs`。
+
+---
+
+## AI 聊天扩展（AI 伙伴 / 多供应商大模型）
+
+见 **[API-AI聊天.md](API-AI聊天.md)**：自定义聊天对象（AI 伙伴）、与 AI 伙伴聊天的读写接口、服务端多供应商配置（DeepSeek / OpenAI 兼容 / Anthropic / Gemini）。
+
