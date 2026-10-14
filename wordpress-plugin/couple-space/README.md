@@ -69,6 +69,20 @@ couple-space/
 | REST 命名空间 | `https://域名/wp-json/couple/v1/api/health` | App 里填 `https://域名/wp-json/couple/v1` |
 | query 兜底 | `https://域名/?couple_api=/api/health` | 固定链接没开时也能用 |
 
+> **固定链接不用特意设置**：上面三种地址在「文章名」和「朴素」两种固定链接下都实测可用
+> （启用插件时已注册 `^api/(.*)$` 规则并自动刷新一次 rewrite 规则）。
+> 如果服务器上的 nginx/Apache 规则把 `^api/` 拦掉了，改用第二种地址即可，功能完全一样。
+> 另外 `/index.php?rest_route=/couple/v1/api/health` 也能用（WordPress REST 的标准兜底形式）。
+
+## 本地开发
+
+```bash
+# 用 PHP 内置服务器跑 WordPress（把插件放到 wp-content/plugins/couple-space）
+php -S 127.0.0.1:8890 -t <wordpress目录> <wordpress目录>/router.php
+# 跑端到端测试（结果写入 tests/report.txt）
+php wp-content/plugins/couple-space/tests/e2e.php
+```
+
 ## 测试
 
 ```bash

@@ -351,6 +351,12 @@ $T->ok( 200 === $patch_couple['status'] && 1700000000000 === $T->get( $patch_cou
 $patch_couple_bad = $T->req( 'PATCH', '/api/couple', array( 'togetherDate' => 'abc' ), array( 'Authorization' => 'Bearer ' . $tok1 ) );
 $T->ok( 400 === $patch_couple_bad['status'], 'togetherDate 非整数 → 400 invalid_input', $T->brief( $patch_couple_bad ) );
 
+$patch_couple_null = $T->req( 'PATCH', '/api/couple', array( 'togetherDate' => null ), array( 'Authorization' => 'Bearer ' . $tok1 ) );
+$T->ok( 200 === $patch_couple_null['status'] && null === $T->get( $patch_couple_null, 'couple.togetherDate' ), 'togetherDate 传 null 显式清空', $T->brief( $patch_couple_null ) );
+
+// 恢复一个在一起日期，供后面用例使用。
+$T->req( 'PATCH', '/api/couple', array( 'togetherDate' => 1700000000000 ), array( 'Authorization' => 'Bearer ' . $tok1 ) );
+
 $patch_couple_empty = $T->req( 'PATCH', '/api/couple', array(), array( 'Authorization' => 'Bearer ' . $tok1 ) );
 $T->ok( 400 === $patch_couple_empty['status'], 'PATCH /api/couple 空请求体 → 400 invalid_input', $T->brief( $patch_couple_empty ) );
 
@@ -498,7 +504,22 @@ $T->ok( 200 === $list['status'] && count( $msgs ) > 0 && $asc_ok && is_bool( $T-
 
 $before   = (int) $msgs[0]['createdAt'];
 $list_before = $T->req( 'GET', '/api/chat/messages?before=' . $before . '&limit=5', null, array( 'Authorization' => 'Bearer ' . $tok1 ) );
-$T->ok( 200 === $list_before['status'], 'before 分页可用', $T->brief( $list_before ) );
+$before_all_older = true;
+foreach ( (array) $T->get( $list_before, 'messages' ) as $m ) {
+	if ( (int) $m['createdAt'] >= $before ) {
+		$before_all_older = false;
+	}
+}
+$T->ok( 200 === $list_before['status'] && $before_all_older, 'before 分页只返回更早的消息', count( (array) $T->get( $list_before, 'messages' ) ) . ' 条，全部 < ' . $before );
+
+$list_limit = $T->req( 'GET', '/api/chat/messages?limit=2', null, array( 'Authorization' => 'Bearer ' . $tok1 ) );
+$T->ok( 200 === $list_limit['status'] && count( (array) $T->get( $list_limit, 'messages' ) ) <= 2 && true === $T->get( $list_limit, 'hasMore' ), 'limit=2 时只返回 2 条且 hasMore=true', $T->brief( $list_limit ) );
+
+$list_bad_limit = $T->req( 'GET', '/api/chat/messages?limit=0', null, array( 'Authorization' => 'Bearer ' . $tok1 ) );
+$T->ok( 400 === $list_bad_limit['status'], 'limit=0 → 400 invalid_input', $T->brief( $list_bad_limit ) );
+
+$read_bad = $T->req( 'POST', '/api/chat/read', array( 'upTo' => 'abc' ), array( 'Authorization' => 'Bearer ' . $tok1 ) );
+$T->ok( 400 === $read_bad['status'], 'read upTo 非整数 → 400 invalid_input', $T->brief( $read_bad ) );
 
 $list_unbound = $T->req( 'GET', '/api/chat/messages', null, array( 'Authorization' => 'Bearer ' . $tok3 ) );
 $T->ok( 403 === $list_unbound['status'], '未绑定拉消息 → 403 forbidden', $T->brief( $list_unbound ) );
@@ -703,6 +724,22 @@ $T->ok( 200 === $upload_gif['status'] && 'image/gif' === $T->get( $upload_gif, '
 
 $file_dir = $T->wp_eval( 'echo \CoupleSpace\EmojiStore::base_dir();' );
 $T->ok( false !== strpos( $file_dir['out'], 'uploads' ) && false !== strpos( $file_dir['out'], 'couple-emoji' ), '表情图片存放在 wp-content/uploads/couple-emoji/', trim( $file_dir['out'] ) );
+
+// 表情包上限（后台可调）：把上限调到 1，占满后再创建应返回 409。
+$limit_pack_dir = $T->wp_eval( '\CoupleSpace\Config::update_options( array() ); echo "ok";' );
+$T->db_exec( 'UPDATE `' . $T->table( 'settings' ) . "` SET `value`='1' WHERE `key`='maxEmojiPacks'" );
+$T->wp_eval( '\CoupleSpace\Settings::flush(); echo "flushed";' );
+$pack_over = $T->req( 'POST', '/api/emoji/packs', array( 'name' => '超限包' ), array( 'Authorization' => 'Bearer ' . $tok1 ) );
+$T->ok(
+	409 === $pack_over['status'] && 'conflict' === $T->get( $pack_over, 'error' ) && false !== strpos( (string) $T->get( $pack_over, 'message' ), '上限' ),
+	'表情包数量达到后台设置的上限 → 409 conflict',
+	$T->brief( $pack_over )
+);
+$T->db_exec( 'UPDATE `' . $T->table( 'settings' ) . "` SET `value`='30' WHERE `key`='maxEmojiPacks'" );
+
+// 同一情侣空间内，未绑定用户看不到任何自建包。
+$packs_outsider = $T->req( 'GET', '/api/emoji/packs', null, array( 'Authorization' => 'Bearer ' . $tok4 ) );
+$T->ok( 403 === $packs_outsider['status'], '未绑定用户拉表情包 → 403 forbidden', $T->brief( $packs_outsider ) );
 
 // ---------------------------------------------------------------------
 // 7. AI
