@@ -21,7 +21,7 @@ struct HomeView: View {
             ScrollView {
                 VStack(spacing: 16) {
                     coupleHeader
-                    liveIslandCard
+                    realtimeCard
                     quickActions
                     todaySection
                     loveSection
@@ -117,10 +117,10 @@ struct HomeView: View {
         }
     }
 
-    // MARK: - 灵动岛
+    // MARK: - 实时卡片（在一起天数 / 加班计时 / 火花）
 
-    private var liveIslandCard: some View {
-        LiveIslandCard()
+    private var realtimeCard: some View {
+        RealtimeCard()
     }
 
     // MARK: - 快捷入口

@@ -3,7 +3,8 @@ import SwiftUI
 /// 登录 / 注册
 ///
 /// 说明：页面默认不再展示服务器地址填写。
-/// - 右上角有一个不显眼的小齿轮，点开就是原来的 ServerSetupView（换服务器时的兜底入口）
+/// - 地址已内置并强制 https，正常情况不需要用户做任何事
+/// - 右上角有一个不显眼的小齿轮，点开就是原来的 ServerSetupView（连不上时的兜底入口）
 /// - 页面出现时会对 /api/health 做一次**静默**检测，只有连不上时才在表单上方
 ///   显示一小块「地址修正区」
 struct LoginView: View {
@@ -119,7 +120,7 @@ struct LoginView: View {
                 .foregroundColor(.secondary)
                 .lineLimit(2)
 
-            TextField("http://192.168.1.10:8787", text: $fixText)
+            TextField("https://nb.wwoyun.cn", text: $fixText)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled(true)
                 .keyboardType(.URL)
@@ -163,7 +164,7 @@ struct LoginView: View {
                 .disabled(isSavingFix)
             }
 
-            Text("也可以点右上角齿轮打开完整的「服务器设置」。")
+            Text("也可以点右上角齿轮打开完整的「服务器设置」。地址一律走 https，没写协议时会自动补 https://。")
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
         }
@@ -374,7 +375,7 @@ struct LoginView: View {
                     .font(.system(size: 15, weight: .semibold))
                 Spacer()
             }
-            Text("可以不登录，直接在本机使用：账本、密码本、宠物、签到、愿望、加班工资、灵动岛全都可用。只有聊天和两台手机同步需要服务器。")
+            Text("可以不登录，直接在本机使用：账本、密码本、宠物、签到、愿望、加班工资全都可用。只有聊天和两台手机同步需要服务器。")
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
 

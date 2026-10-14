@@ -6,7 +6,6 @@ struct WorkLogView: View {
     @EnvironmentObject var store: LocalStore
     @EnvironmentObject var toast: ToastCenter
     @EnvironmentObject var sync: SyncEngine
-    @EnvironmentObject var live: LiveActivityController
 
     @State private var month = Date()
     @State private var editing: WorkLog?
@@ -184,17 +183,6 @@ struct WorkLogView: View {
                     .buttonStyle(PrimaryButtonStyle(color: AppTheme.blue))
                 }
             }
-
-            if let log = todayLog, log.isRunning {
-                Button {
-                    live.startOvertimeActivity(startAtMs: log.startAt, partnerName: session.partnerName)
-                    toast.show(live.lastError.isEmpty ? "灵动岛开始计时" : live.lastError)
-                } label: {
-                    Label("在灵动岛显示加班计时", systemImage: "iphone.gen3")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(PrimaryButtonStyle(color: AppTheme.purple))
-            }
         }
         .card()
     }
@@ -357,9 +345,6 @@ struct WorkLogView: View {
         sync.requestSync()
         Haptics.success()
         toast.success("下班打卡成功，工时 " + String(format: "%.1f", log.workedHours) + " 小时")
-        if live.isRunning {
-            live.stop()
-        }
     }
 }
 

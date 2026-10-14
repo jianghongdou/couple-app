@@ -41,7 +41,7 @@ struct LocalModeSetupView: View {
                             row("✅", "AI 记账、加班工资统计（账目只存本机）")
                             row("✅", "密码本（AES-GCM 加密 + Face ID）")
                             row("✅", "宠物养成、签到、愿望、火花")
-                            row("✅", "灵动岛 / 锁屏实时活动")
+                            row("✅", "首页实时卡片（在一起天数 / 加班计时 / 火花）")
                             row("⚠️", "聊天与两台手机同步需要服务器（之后可以随时登录切换）")
                         }
                     }
@@ -55,7 +55,7 @@ struct LocalModeSetupView: View {
                     }
                     .buttonStyle(PrimaryButtonStyle(color: AppTheme.mint))
 
-                    Text("以后想连服务器：我的 → 退出登录 → 回到登录页填写服务器地址即可。本机的账本与密码本会保留。")
+                    Text("以后想连服务器：我的 → 退出登录 → 回到登录页直接登录即可（服务器地址已内置，不用填）。本机的账本与密码本会保留。")
                         .font(.system(size: 11))
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)

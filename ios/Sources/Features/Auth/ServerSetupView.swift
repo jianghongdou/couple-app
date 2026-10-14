@@ -19,7 +19,7 @@ struct ServerSetupView: View {
                         Text("服务器地址")
                             .font(.system(size: 13, weight: .medium))
                             .foregroundColor(.secondary)
-                        TextField("http://192.168.1.10:8787", text: $text)
+                        TextField("https://nb.wwoyun.cn", text: $text)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled(true)
                             .keyboardType(.URL)
@@ -35,10 +35,10 @@ struct ServerSetupView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("填写规则")
                             .font(.system(size: 13, weight: .semibold))
+                        rule("只能用 https，程序会自动补 https://（http 会被服务器 301 跳转并丢请求体）")
                         rule("不要带 /api 后缀，程序会自动补上")
-                        rule("局域网测试：http://192.168.1.10:8787")
-                        rule("公网服务器：https://couple.你的域名.com（推荐，走 HTTPS）")
-                        rule("不带 http:// 时程序会自动补 http://")
+                        rule("公网服务器：https://nb.wwoyun.cn（当前 App 内置的默认地址）")
+                        rule("这里的入口只是兜底：正常情况下服务器地址已固定，不需要修改")
                     }
                     .card()
 

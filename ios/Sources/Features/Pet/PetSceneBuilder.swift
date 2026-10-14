@@ -241,6 +241,8 @@ final class Pet3DBuilder {
         pivot.position = Pet3DMath.vec(0.0, 0.95, 0.0)
 
         let camera = SCNCamera()
+        // 视野角与相机距离共同决定宠物在卡片里的大小：
+        // 距离 6.30 时宠物只占卡片高度的 1/5 左右（显得太小），压到 3.90 让它明显变大。
         camera.fieldOfView = 38
         camera.zNear = 0.1
         camera.zFar = 60
@@ -249,7 +251,7 @@ final class Pet3DBuilder {
         let node = SCNNode()
         node.name = "pet3d.camera"
         node.camera = camera
-        node.position = Pet3DMath.vec(0.0, 1.35, 6.30)
+        node.position = Pet3DMath.vec(0.0, 1.15, 3.90)
         // 用约束让相机永远看着 pivot，避免手算旋转出错
         let lookAt = SCNLookAtConstraint(target: pivot)
         lookAt.isGimbalLockEnabled = true

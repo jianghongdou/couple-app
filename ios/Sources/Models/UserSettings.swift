@@ -21,14 +21,10 @@ struct UserSettings: Codable, Equatable {
     var workEndMinute: Int = 0
     /// 发薪日
     var salaryDay: Int = 15
-    /// 是否开启灵动岛
-    var liveActivityEnabled: Bool = true
-    /// 灵动岛显示样式：days / overtime / spark
-    var liveActivityStyle: String = "days"
+    /// 首页「实时卡片」显示的内容：days / overtime / spark
+    var cardStyle: String = "days"
     /// 是否开启消息通知（前台横幅）
     var inAppBannerEnabled: Bool = true
-    /// 灵动岛显示的标题
-    var liveActivityTitle: String = ""
     /// 最近一次同步时间
     var lastSyncAt: Double = 0
     var updatedAt: Double = 0
@@ -48,10 +44,8 @@ struct UserSettings: Codable, Equatable {
         self.workEndHour = JSONRead.int(json, "workEndHour", 18)
         self.workEndMinute = JSONRead.int(json, "workEndMinute")
         self.salaryDay = JSONRead.int(json, "salaryDay", 15)
-        self.liveActivityEnabled = JSONRead.bool(json, "liveActivityEnabled", true)
-        self.liveActivityStyle = JSONRead.string(json, "liveActivityStyle", "days")
+        self.cardStyle = JSONRead.string(json, "cardStyle", "days")
         self.inAppBannerEnabled = JSONRead.bool(json, "inAppBannerEnabled", true)
-        self.liveActivityTitle = JSONRead.string(json, "liveActivityTitle")
         self.lastSyncAt = JSONRead.double(json, "lastSyncAt")
         self.updatedAt = JSONRead.double(json, "updatedAt")
         self.isDeleted = JSONRead.bool(json, "isDeleted")

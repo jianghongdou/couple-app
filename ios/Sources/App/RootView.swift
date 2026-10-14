@@ -67,7 +67,6 @@ struct RootView: View {
             guard session.isLoggedIn else { return }
             session.startServices()
             Task { await SyncEngine.shared.syncNow() }
-            LiveActivityController.shared.refreshRunning()
         case .background:
             store.saveNow()
         case .inactive:

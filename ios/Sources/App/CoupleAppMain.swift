@@ -9,7 +9,6 @@ struct CoupleAppMain: App {
     @StateObject private var chat = ChatService.shared
     @StateObject private var emoji = EmojiService.shared
     @StateObject private var sync = SyncEngine.shared
-    @StateObject private var live = LiveActivityController.shared
     @StateObject private var toast = ToastCenter.shared
     @StateObject private var realtime = RealtimeClient.shared
     @StateObject private var ai = AIChatService.shared
@@ -23,7 +22,6 @@ struct CoupleAppMain: App {
                 .environmentObject(chat)
                 .environmentObject(emoji)
                 .environmentObject(sync)
-                .environmentObject(live)
                 .environmentObject(toast)
                 .environmentObject(realtime)
                 .environmentObject(ai)

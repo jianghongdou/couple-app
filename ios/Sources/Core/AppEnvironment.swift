@@ -13,7 +13,6 @@ extension View {
             .environmentObject(ChatService.shared)
             .environmentObject(EmojiService.shared)
             .environmentObject(SyncEngine.shared)
-            .environmentObject(LiveActivityController.shared)
             .environmentObject(ToastCenter.shared)
             .environmentObject(RealtimeClient.shared)
             .environmentObject(AIChatService.shared)

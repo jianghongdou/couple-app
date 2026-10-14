@@ -145,7 +145,7 @@ final class SessionManager: ObservableObject {
         DeviceConfig.shared.token.isEmpty && DeviceConfig.shared.userId.hasPrefix("local_")
     }
 
-    /// 不登录也能用：账本、密码本、宠物、签到、愿望、加班、灵动岛全部可用
+    /// 不登录也能用：账本、密码本、宠物、签到、愿望、加班全部可用
     func startLocalMode(nickname: String, avatarEmoji: String) {
         let identifier = "local_" + String(UUID().uuidString.prefix(8)).lowercased()
         let name = nickname.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -256,7 +256,6 @@ final class SessionManager: ObservableObject {
         ChatService.shared.stop()
         Task { @MainActor in AIChatService.shared.reset() }   // AIChatService 是 @MainActor，跨隔离调用需要切回主线程
         SyncEngine.shared.stopAutoSync()
-        LiveActivityController.shared.stop()
         DeviceConfig.shared.clearAccount()
         LocalStore.shared.resetAfterLogout(keepLedger: true, keepVault: true)
         user = nil

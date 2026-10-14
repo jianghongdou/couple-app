@@ -7,11 +7,9 @@ struct SettingsView: View {
     @EnvironmentObject var session: SessionManager
     @EnvironmentObject var store: LocalStore
     @EnvironmentObject var sync: SyncEngine
-    @EnvironmentObject var live: LiveActivityController
     @EnvironmentObject var toast: ToastCenter
     @EnvironmentObject var device: DeviceConfig
 
-    @State private var showServerSheet = false
     @State private var showAnniversary = false
     @State private var inviteInput = ""
     @State private var showUnbindConfirm = false
@@ -39,9 +37,6 @@ struct SettingsView: View {
             .background(AppBackground())
             .navigationTitle("设置")
             .navigationBarTitleDisplayMode(.inline)
-            .sheet(isPresented: $showServerSheet) {
-                ServerSetupView().appEnvironment()
-            }
             .sheet(isPresented: $showAnniversary) {
                 anniversarySheet.appEnvironment()
             }
@@ -114,7 +109,7 @@ struct SettingsView: View {
                 }
             } else {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("两种绑定方式，两台手机都要填同一个服务器地址。")
+                    Text("两种绑定方式，两台手机都会连同一个内置服务器地址。")
                         .font(.system(size: 12))
                         .foregroundColor(.secondary)
 
@@ -182,7 +177,6 @@ struct SettingsView: View {
                     Task {
                         await session.setTogetherDate(value)
                         showAnniversary = false
-                        live.startTogetherActivity(togetherDateMs: value, partnerName: session.partnerName)
                         toast.success("纪念日已保存")
                     }
                 } label: {
@@ -248,23 +242,6 @@ struct SettingsView: View {
                     .font(.system(size: 14))
             }
             .tint(accent)
-
-            Toggle(isOn: Binding(
-                get: { settings.liveActivityEnabled },
-                set: { value in
-                    store.updateSettings { item in item.liveActivityEnabled = value }
-                    sync.requestSync()
-                    if !value { live.stop() }
-                }
-            )) {
-                Text("启用灵动岛 / 锁屏实时活动")
-                    .font(.system(size: 14))
-            }
-            .tint(accent)
-
-            Text(live.supportDescription)
-                .font(.system(size: 11))
-                .foregroundColor(.secondary)
         }
     }
 
@@ -280,6 +257,11 @@ struct SettingsView: View {
                 infoRow("同步内容", "火花 / 宠物 / 签到 / 愿望 / 加班记录")
                 infoRow("永不上传", "记账、密码本")
             }
+
+            // 地址已写死在 App 里（强制 https），这里只读展示，不提供修改入口
+            Text("服务器地址已固定，不可修改；两台手机必须连同一个地址。")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
 
             if !sync.lastError.isEmpty {
                 Text(sync.lastError)
@@ -297,13 +279,6 @@ struct SettingsView: View {
                     Label("立即同步", systemImage: "arrow.triangle.2.circlepath")
                 }
                 .buttonStyle(SoftButtonStyle(color: AppTheme.blue))
-
-                Button {
-                    showServerSheet = true
-                } label: {
-                    Label("服务器设置", systemImage: "server.rack")
-                }
-                .buttonStyle(SoftButtonStyle(color: accent))
 
                 Button {
                     sync.resetSyncCursor()
@@ -403,12 +378,12 @@ struct SettingsView: View {
         SectionCard(title: "关于", icon: "info.circle") {
             VStack(alignment: .leading, spacing: 6) {
                 infoRow("软件名称", AppInfo.displayName)
+                // 版本号直接读 Bundle 的 CFBundleShortVersionString + CFBundleVersion，
+                // 不写死；project.yml 里改 MARKETING_VERSION / CURRENT_PROJECT_VERSION 即可
                 infoRow("版本号", AppInfo.fullVersion)
                 infoRow("构建号", AppInfo.build)
-                infoRow("安装包类型", AppInfo.widgetExtensionEnabled ? "完整版（含灵动岛扩展）" : "轻量版（无扩展）")
-                infoRow("灵动岛", live.isSupported ? "支持" : "不支持")
+                infoRow("安装包类型", AppInfo.installTypeDescription)
                 infoRow("设备型号", AppInfo.deviceModel)
-                infoRow("最低系统", "iOS 16.1")
             }
 
             if let meta = session.meta, !meta.announcement.isEmpty {
@@ -426,6 +401,20 @@ struct SettingsView: View {
                         .fill(AppTheme.orange.opacity(0.1))
                 )
             }
+
+            Button {
+                Task {
+                    await session.loadMeta()
+                    if let meta = session.meta, meta.hasNewVersion {
+                        toast.show("发现新版本，请点下方链接下载")
+                    } else {
+                        toast.success("已是最新版本 \(AppInfo.fullVersion)")
+                    }
+                }
+            } label: {
+                Label("检查更新", systemImage: "arrow.clockwise")
+            }
+            .buttonStyle(SoftButtonStyle(color: AppTheme.blue))
 
             if let meta = session.meta, meta.hasNewVersion, !meta.updateURL.isEmpty,
                let url = URL(string: meta.updateURL) {

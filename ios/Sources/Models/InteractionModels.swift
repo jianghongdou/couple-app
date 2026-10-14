@@ -203,13 +203,16 @@ struct PetState: Codable, Equatable {
     }
 
     /// 宠物性格文案
+    ///
+    /// 注意：这里**不要再拼名字**。界面上显示成「小奶糖 · <moodLine>」，
+    /// 拼了名字会变成「小奶糖 · 小奶糖 正在发呆…」。
     var moodLine: String {
-        if energy < 20 { return "\(name)困得睁不开眼了…"}
-        if hunger < 20 { return "\(name)肚子在咕咕叫啦"}
-        if mood < 20 { return "\(name)想要你陪陪它"}
-        if mood > 85 { return "\(name)现在超幸福！"}
-        if hunger > 85 { return "\(name)吃得圆滚滚的"}
-        return "\(name)正在发呆，看起来很想你"
+        if energy < 20 { return "困得睁不开眼了…" }
+        if hunger < 20 { return "肚子在咕咕叫啦" }
+        if mood < 20 { return "想要你陪陪它" }
+        if mood > 85 { return "现在超幸福！" }
+        if hunger > 85 { return "吃得圆滚滚的" }
+        return "正在发呆，看起来很想你"
     }
 
     static let speciesList: [PetSpecies] = [

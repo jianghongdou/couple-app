@@ -1,15 +1,13 @@
 import SwiftUI
 
-/// 灵动岛卡片。
-/// - 完整版：可以真正开启灵动岛 / 锁屏实时活动
-/// - 轻量版：用同样的界面在 App 内展示，功能不受影响
-struct LiveIslandCard: View {
+/// 首页「实时卡片」：展示「在一起天数 / 加班计时 / 火花」。
+///
+/// 说明：这就是一张普通的 App 内 SwiftUI 卡片（外观沿用了黑色胶囊造型），
+/// 不涉及系统实时活动、不依赖任何小组件扩展；
+/// 加班计时、火花、签到等功能逻辑本身照常记录，卡片只负责显示。
+struct RealtimeCard: View {
     @EnvironmentObject var session: SessionManager
     @EnvironmentObject var store: LocalStore
-    @EnvironmentObject var live: LiveActivityController
-    @EnvironmentObject var toast: ToastCenter
-
-    @State private var showStylePicker = false
 
     private var settings: UserSettings { store.state.settings }
     private var accent: Color { AppTheme.accent(for: settings.accentKey) }
@@ -20,49 +18,18 @@ struct LiveIslandCard: View {
             HStack(spacing: 8) {
                 Image(systemName: "iphone.gen3")
                     .foregroundColor(AppTheme.purple)
-                Text("灵动岛")
+                Text("实时卡片")
                     .font(.system(size: 16, weight: .semibold))
                 Spacer()
-                if live.isSupported {
-                    TagChip(text: live.isRunning ? "运行中" : "未开启", color: live.isRunning ? AppTheme.mint : .gray, filled: live.isRunning)
-                } else {
-                    TagChip(text: "卡片模式", color: AppTheme.purple)
-                }
+                TagChip(text: "App 内展示", color: AppTheme.purple)
             }
 
-            islandPreview
-
-            if !live.isSupported {
-                Text(live.supportDescription)
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-            }
-
-            HStack(spacing: 10) {
-                Button {
-                    start()
-                } label: {
-                    Text(live.isRunning ? "更新显示" : "开启灵动岛")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(PrimaryButtonStyle(color: AppTheme.purple))
-
-                Button {
-                    live.stop()
-                    toast.show("已关闭灵动岛")
-                } label: {
-                    Text("关闭")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(PrimaryButtonStyle(color: Color.gray.opacity(0.7), enabled: live.isRunning))
-                .disabled(!live.isRunning)
-            }
+            cardPreview
 
             Picker("显示内容", selection: Binding(
-                get: { settings.liveActivityStyle },
+                get: { settings.cardStyle },
                 set: { value in
-                    store.updateSettings { item in item.liveActivityStyle = value }
-                    if live.isRunning { start() }
+                    store.updateSettings { item in item.cardStyle = value }
                 }
             )) {
                 Text("在一起天数").tag("days")
@@ -70,13 +37,17 @@ struct LiveIslandCard: View {
                 Text("火花").tag("spark")
             }
             .pickerStyle(.segmented)
+
+            Text("内容随本机数据自动更新；打卡记录、火花值都在「加班工资」「火花」里照常保存。")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
         }
         .card()
     }
 
-    // MARK: - 灵动岛预览
+    // MARK: - 卡片预览
 
-    private var islandPreview: some View {
+    private var cardPreview: some View {
         VStack(spacing: 10) {
             HStack(spacing: 10) {
                 Text(previewEmoji)
@@ -106,10 +77,10 @@ struct LiveIslandCard: View {
             )
 
             HStack(spacing: 8) {
-                Image(systemName: "lock.fill")
+                Image(systemName: "arrow.triangle.2.circlepath")
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
-                Text("锁屏上也会显示同样的信息")
+                Text("这张卡片只在 App 内显示")
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
                 Spacer()
@@ -124,14 +95,14 @@ struct LiveIslandCard: View {
 
     @ViewBuilder
     private var previewTrailing: some View {
-        if settings.liveActivityStyle == "overtime", let log = todayWorkLog, log.isRunning {
+        if settings.cardStyle == "overtime", let log = todayWorkLog, log.isRunning {
             TimelineView(.periodic(from: Date(), by: 1)) { context in
                 Text(elapsedText(from: log.startAt, now: context.date))
                     .font(.system(size: 14, weight: .semibold, design: .rounded))
                     .monospacedDigit()
                     .foregroundColor(.white)
             }
-        } else if settings.liveActivityStyle == "spark" {
+        } else if settings.cardStyle == "spark" {
             Text("🔥 \(store.state.spark.points)")
                 .font(.system(size: 14, weight: .semibold, design: .rounded))
                 .foregroundColor(.white)
@@ -143,7 +114,7 @@ struct LiveIslandCard: View {
     }
 
     private var previewEmoji: String {
-        switch settings.liveActivityStyle {
+        switch settings.cardStyle {
         case "overtime": return "💼"
         case "spark": return "🔥"
         default: return "❤️"
@@ -151,7 +122,7 @@ struct LiveIslandCard: View {
     }
 
     private var previewTitle: String {
-        switch settings.liveActivityStyle {
+        switch settings.cardStyle {
         case "overtime": return "加班中"
         case "spark": return "火花 \(store.state.spark.points)"
         default:
@@ -160,7 +131,7 @@ struct LiveIslandCard: View {
     }
 
     private var previewSubtitle: String {
-        switch settings.liveActivityStyle {
+        switch settings.cardStyle {
         case "overtime":
             return session.partnerName == "TA" ? "" : "为我加油：\(session.partnerName)"
         case "spark":
@@ -173,32 +144,5 @@ struct LiveIslandCard: View {
     private func elapsedText(from startMs: Double, now: Date) -> String {
         let seconds = now.timeIntervalSince1970 - startMs / 1000
         return DateUtils.duration(max(0, seconds))
-    }
-
-    // MARK: - 操作
-
-    private func start() {
-        Haptics.tap()
-        switch settings.liveActivityStyle {
-        case "overtime":
-            let start = todayWorkLog?.startAt ?? DateUtils.ms()
-            live.startOvertimeActivity(startAtMs: start, partnerName: session.partnerName)
-        case "spark":
-            live.startSparkActivity(
-                points: store.state.spark.points,
-                days: store.state.spark.days,
-                partnerName: session.partnerName
-            )
-        default:
-            live.startTogetherActivity(
-                togetherDateMs: session.togetherDate,
-                partnerName: session.partnerName
-            )
-        }
-        if let error = live.lastError.isEmpty ? nil : live.lastError {
-            toast.error(error)
-        } else {
-            toast.success(live.statusText.isEmpty ? "灵动岛已开启" : live.statusText)
-        }
     }
 }
