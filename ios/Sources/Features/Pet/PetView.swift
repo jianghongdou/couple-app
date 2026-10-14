@@ -9,14 +9,14 @@ struct PetView: View {
     @EnvironmentObject var toast: ToastCenter
     @EnvironmentObject var sync: SyncEngine
 
-    @State private var bounce = false
-    @State private var petScale: CGFloat = 1
     @State private var showRename = false
     @State private var showShop = false
     @State private var newName = ""
     @State private var photoItem: PhotosPickerItem?
     @State private var isLoadingPhoto = false
     @State private var bubbleText = ""
+    /// 喂食 / 陪玩成功后给 3D 形象发一个动作（带序号，连点也能重复触发）
+    @State private var petAction: Pet3DAction = .none
 
     private var pet: PetState { store.state.pet }
 
@@ -65,7 +65,6 @@ struct PetView: View {
             }
             .onAppear {
                 store.applyPetDecayIfNeeded()
-                startBounce()
             }
             .onChange(of: photoItem) { item in
                 guard let item = item else { return }
@@ -80,7 +79,17 @@ struct PetView: View {
         VStack(spacing: 12) {
             HStack {
                 TagChip(text: "Lv.\(pet.level)", color: AppTheme.purple, filled: true)
+                TagChip(text: PetGrowthStage.stage(forLevel: pet.level).title, color: AppTheme.mint)
                 Spacer()
+                // 自定义照片：现在退居成右上角的小头像，不再顶替 3D 形象
+                if let url = store.customPetImageURL(), let image = UIImage(contentsOfFile: url.path) {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 30, height: 30)
+                        .clipShape(Circle())
+                        .overlay(Circle().stroke(AppTheme.pink.opacity(0.5), lineWidth: 1.5))
+                }
                 HStack(spacing: 4) {
                     Text("🪙").font(.system(size: 13))
                     Text("\(pet.coins)")
@@ -89,36 +98,13 @@ struct PetView: View {
                 }
             }
 
-            ZStack {
-                Circle()
-                    .fill(
-                        RadialGradient(
-                            colors: [AppTheme.pink.opacity(0.22), Color.clear],
-                            center: .center,
-                            startRadius: 10,
-                            endRadius: 130
-                        )
-                    )
-                    .frame(width: 240, height: 240)
-
-                if let url = store.customPetImageURL(), let image = UIImage(contentsOfFile: url.path) {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: 170, height: 170)
-                        .clipShape(Circle())
-                        .overlay(Circle().stroke(AppTheme.pink.opacity(0.5), lineWidth: 2))
-                } else {
-                    Text(pet.emoji)
-                        .font(.system(size: 110))
-                        .shadow(color: AppTheme.pink.opacity(0.35), radius: 16, y: 8)
-                }
-            }
-            .scaleEffect(petScale)
-            .offset(y: bounce ? -8 : 0)
-            .onTapGesture {
-                touchPet()
-            }
+            // Q 版 3D 宠物（SceneKit）
+            Pet3DView(
+                pet: pet,
+                onReaction: { reactToTouch() },
+                action: petAction
+            )
+            .frame(height: 250)
 
             if !bubbleText.isEmpty {
                 Text(bubbleText)
@@ -164,7 +150,7 @@ struct PetView: View {
                 StatTile(title: "心情", value: pet.moodState, color: AppTheme.pink)
                 StatTile(title: "精力", value: pet.energyState, color: AppTheme.mint)
             }
-            Text("每 2 小时饱食度和心情会自然下降 1 点，精力会恢复。常来看看它吧。")
+            Text("每 2 小时饱食度和心情会自然下降 1 点，精力会恢复。3D 宠物会跟着等级长大、跟着心情换表情，常来看看它吧。")
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
         }
@@ -176,13 +162,13 @@ struct PetView: View {
         VStack(spacing: 12) {
             HStack(spacing: 10) {
                 actionButton(icon: "🍚", title: "喂食", subtitle: "10 金币", color: AppTheme.orange) {
-                    handle(store.feedPet())
+                    runPetAction(.eat) { store.feedPet() }
                 }
                 actionButton(icon: "🎾", title: "陪玩", subtitle: "赚金币", color: AppTheme.pink) {
-                    handle(store.playWithPet())
+                    runPetAction(.happy) { store.playWithPet() }
                 }
                 actionButton(icon: "😴", title: "睡觉", subtitle: "恢复精力", color: AppTheme.blue) {
-                    handle(store.sleepPet())
+                    runPetAction(.sleep) { store.sleepPet() }
                 }
             }
 
@@ -229,6 +215,7 @@ struct PetView: View {
                 toast.show(gained > 0 ? "陪宠物待了一会儿，火花 +\(gained)" : "今天火花值已满")
                 bubbleText = pet.moodLine
                 Haptics.soft()
+                petAction = .happy(nextToken())
             } label: {
                 Text("陪它待一会儿")
             }
@@ -262,10 +249,12 @@ struct PetView: View {
     private var infoCard: some View {
         SectionCard(title: "养成说明", icon: "info.circle") {
             VStack(alignment: .leading, spacing: 8) {
+                infoRow("3D 伙伴", "大脑袋三头身，等级越高越长大、颜色越奶")
+                infoRow("互动方式", "拖动可以 360° 转，点一下它会抖一抖")
                 infoRow("金币来源", "签到、陪玩、记账、完成愿望")
                 infoRow("经验来源", "喂食 +6、陪玩 +12、睡觉 +3")
                 infoRow("双人共享", "宠物由你们两个人共同照顾，状态会同步")
-                infoRow("自定义形象", "可以上传任意照片当宠物（只存本机）")
+                infoRow("自定义形象", "上传的照片会显示在右上角小头像（只存本机）")
             }
         }
     }
@@ -284,23 +273,13 @@ struct PetView: View {
 
     // MARK: - 交互
 
-    private func startBounce() {
-        withAnimation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true)) {
-            bounce = true
-        }
-    }
-
-    private func touchPet() {
+    /// 点一下宠物：触感反馈 + 让 3D 形象做形变抖动 / 高光闪的反应
+    private func reactToTouch() {
         Haptics.tap()
-        withAnimation(.spring(response: 0.28, dampingFraction: 0.5)) {
-            petScale = 1.12
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                petScale = 1
-            }
-        }
-        bubbleText = pet.moodLine
+        petAction = .poke(nextToken())
+        clearTrigger(after: 0.8)
+        // 用心情对应的反应台词，比固定文案更有「活着」的感觉
+        bubbleText = Pet3DMood.derive(from: pet).reactionLine
     }
 
     private func handle(_ result: LocalStore.PetActionResult) {
@@ -319,6 +298,42 @@ struct PetView: View {
             Haptics.warning()
             toast.show(message)
         }
+    }
+
+    /// 宠物动作分类：决定 3D 形象跳哪段动画
+    private enum PetActionKind {
+        case eat
+        case happy
+        case sleep
+    }
+
+    /// 执行一次宠物动作，成功后让 3D 形象播对应动画
+    private func runPetAction(_ kind: PetActionKind, _ action: () -> LocalStore.PetActionResult) {
+        let result = action()
+        handle(result)
+        guard case .success = result else { return }
+        switch kind {
+        case .eat:
+            petAction = .eat(nextToken())
+            clearTrigger(after: 2.2)
+        case .happy:
+            petAction = .happy(nextToken())
+            clearTrigger(after: 1.6)
+        case .sleep:
+            petAction = .sleep(nextToken())
+            clearTrigger(after: 2.4)
+        }
+    }
+
+    /// 动作播完就把触发值清掉，避免每次刷新都重播
+    private func clearTrigger(after seconds: Double) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
+            petAction = .none
+        }
+    }
+
+    private func nextToken() -> Int {
+        Int(Date().timeIntervalSince1970 * 1000)
     }
 
     private func loadPhoto(_ item: PhotosPickerItem) {
