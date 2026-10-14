@@ -53,6 +53,9 @@ class AiUpstream {
 	 * `https://api.deepseek.com/v1`，两者要同时成立，只能允许「带版本段」与「不带版本段」
 	 * 两种写法：这里只在**缺失**版本段时补上（openai/deepseek 补 /v1，gemini 补 /v1beta）。
 	 *
+	 * Base URL 上已带的查询串会被保留并附加在路径之后（例如 `http://host/v1?token=abc`
+	 * 拼成 `http://host/v1/chat/completions?token=abc`，而不是错误的 `...?token=abc/chat/completions`）。
+	 *
 	 * @param string $type     类型。
 	 * @param string $base_url 后台填写的 Base URL（可为空）。
 	 * @param string $model    模型名（gemini 要拼进路径）。
@@ -60,30 +63,40 @@ class AiUpstream {
 	 */
 	public static function endpoint_url( $type, $base_url, $model = '' ) {
 		$type = self::normalize_type( $type );
-		$base = rtrim( trim( (string) $base_url ), '/' );
+		$base = trim( (string) $base_url );
+		$query = '';
+		if ( '' !== $base ) {
+			$qpos = strpos( $base, '?' );
+			if ( false !== $qpos ) {
+				$query = substr( $base, $qpos );
+				$base  = substr( $base, 0, $qpos );
+			}
+		}
+		$base = rtrim( $base, '/' );
 		if ( '' === $base ) {
 			$base = rtrim( Db::default_base_url_for_type( $type ), '/' );
 		}
 
+		$path = '';
 		if ( 'anthropic' === $type ) {
 			if ( ! preg_match( '#/v\d+$#', $base ) ) {
 				$base .= '/v1';
 			}
-			return $base . '/messages';
-		}
-
-		if ( 'gemini' === $type ) {
+			$path = '/messages';
+		} elseif ( 'gemini' === $type ) {
 			if ( ! preg_match( '#/v\d+(?:beta|alpha)?$#', $base ) ) {
 				$base .= '/v1beta';
 			}
-			return $base . '/models/' . rawurlencode( (string) $model ) . ':generateContent';
+			$path = '/models/' . rawurlencode( (string) $model ) . ':generateContent';
+		} else {
+			// openai / deepseek。
+			if ( ! preg_match( '#/v\d+$#', $base ) ) {
+				$base .= '/v1';
+			}
+			$path = '/chat/completions';
 		}
 
-		// openai / deepseek。
-		if ( ! preg_match( '#/v\d+$#', $base ) ) {
-			$base .= '/v1';
-		}
-		return $base . '/chat/completions';
+		return $base . $path . $query;
 	}
 
 	/**
@@ -325,6 +338,16 @@ class AiUpstream {
 		$req          = self::build_request( $provider, $messages, $model, $temperature, $max_tokens );
 		$last_error   = null;
 		$provider_name = isset( $provider['name'] ) && '' !== (string) $provider['name'] ? (string) $provider['name'] : 'AI 供应商';
+
+		/*
+		 * PHP 默认 max_execution_time 是 30 秒，与「上游超时阈值 30 秒」正好撞在一起：
+		 * 不放开的话，慢上游会先被 PHP 判成致命错误（500），而不是我们要的 504 upstream_timeout。
+		 * 这里给足余量（超时值 + 缓冲），保证超时能由 wp_remote_post 触发并被正确映射。
+		 */
+		$limit = $timeout + 20;
+		if ( function_exists( 'set_time_limit' ) && false === strpos( (string) ini_get( 'disable_functions' ), 'set_time_limit' ) ) {
+			@set_time_limit( $limit ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged, WordPress.PHP.IniSet.MaxExecutionTime_Blacklisted
+		}
 
 		for ( $attempt = 0; $attempt <= $max_retries; $attempt++ ) {
 			$started = microtime( true );

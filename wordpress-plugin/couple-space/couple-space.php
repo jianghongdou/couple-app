@@ -3,7 +3,7 @@
  * Plugin Name:       情侣空间（Couple Space）
  * Plugin URI:        https://example.com/couple-space
  * Description:       把「情侣空间」App 的服务端做成 WordPress 插件：装好后上传启用即可，App 里填域名就能连上。接口与 docs/API.md 完全一致（注册登录、情侣绑定、数据同步、聊天、表情包、DeepSeek AI 代理、后台管理）。
- * Version:           1.0.0
+ * Version:           1.1.0
  * Requires at least: 6.0
  * Requires PHP:      8.1
  * Author:            情侣空间
@@ -27,7 +27,7 @@
 defined( 'ABSPATH' ) || exit;
 
 /** 插件版本（与 /api/health 的 version 字段一致）。 */
-define( 'COUPLE_SPACE_VERSION', '1.0.0' );
+define( 'COUPLE_SPACE_VERSION', '1.1.0' );
 
 /** 服务标识（/api/health 的 name 字段）。 */
 define( 'COUPLE_SPACE_SERVER_NAME', 'couple-server' );

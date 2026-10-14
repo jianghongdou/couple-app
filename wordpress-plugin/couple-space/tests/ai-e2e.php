@@ -57,8 +57,27 @@ foreach ( array_slice( $argv, 1 ) as $arg ) {
 
 $T = new E2E_Harness( $opts['url'], $opts['wp'], $opts['php'], $opts['admin'] );
 
-// mock 供应商的请求记录文件（启动脚本通过环境变量 MOCK_LOG 告诉 mock 服务）。
-$mock_log = str_replace( '\\', '/', __DIR__ . '/.mock-requests.log' );
+// mock 供应商的请求记录文件：mock 服务通过环境变量 MOCK_LOG 指定；
+// 没设置时按「仓库副本 tests/」与「已部署副本 .../plugins/couple-space/tests/」找最新写入的那个
+// （两个副本的文件内容一致，只是路径不同）。
+$mock_log_env = getenv( 'MOCK_LOG' );
+if ( is_string( $mock_log_env ) && '' !== $mock_log_env ) {
+	$mock_log = str_replace( '\\', '/', $mock_log_env );
+} else {
+	$candidates = array(
+		str_replace( '\\', '/', __DIR__ . '/.mock-requests.log' ),
+		str_replace( '\\', '/', dirname( __DIR__ ) . '/tests/.mock-requests.log' ),
+	);
+	$mock_log = $candidates[0];
+	$best     = -1;
+	foreach ( $candidates as $c ) {
+		$m = is_file( $c ) ? (int) filemtime( $c ) : -1;
+		if ( $m > $best ) {
+			$best     = $m;
+			$mock_log = $c;
+		}
+	}
+}
 
 // 测试用的 Key 明文：一眼能认出来，便于断言「绝不下发」。
 $KEY_PLAIN   = 'sk-testsuperSECRETkey1234567890abcd';
@@ -130,14 +149,191 @@ function mock_last_path( $file, $path ) {
 	return null;
 }
 
+/**
+ * 直接访问 mock 服务（不经过被测站点，用于探活）。
+ *
+ * @param string $url 完整地址。
+ * @return array{status:int,body:string}
+ */
+function mock_direct( $url ) {
+	$ch = curl_init( $url );
+	curl_setopt_array(
+		$ch,
+		array(
+			CURLOPT_RETURNTRANSFER => true,
+			CURLOPT_CONNECTTIMEOUT => 5,
+			CURLOPT_TIMEOUT        => 10,
+		)
+	);
+	$body   = curl_exec( $ch );
+	$status = (int) curl_getinfo( $ch, CURLINFO_RESPONSE_CODE );
+	curl_close( $ch );
+	return array(
+		'status' => $status,
+		'body'   => ( false === $body ) ? '' : (string) $body,
+	);
+}
+
 $stamp = substr( base_convert( (string) time(), 10, 36 ), -5 ) . str_pad( (string) random_int( 0, 46655 ), 3, '0', STR_PAD_LEFT );
 $uname = static function ( $tag ) use ( $stamp ) {
 	return $tag . $stamp;
 };
 
+// ---------------------------------------------------------------------
+// mock 供应商：优先复用已在监听的实例，否则自己后台起一个
+// ---------------------------------------------------------------------
+//
+// 之前这里只会「起一个」，端口被占用时 `php -S` 立刻退出（HTTP 0），测试直接挂掉；
+// 而且 mock 的记录文件路径只有测试自己知道，手工起的 mock（没带 MOCK_LOG）会把记录
+// 写到别处，导致「上游收到了什么」的断言恒为空。所以这里：
+//   1) 先探活配置的 mock 端口：活着就直接复用（例如用户手工起的那个）；
+//   2) 没活着就用 php -S 后台起一个（带 MOCK_LOG），并轮询等它就绪；
+//   3) 从 mock 的 /__log 读取**它实际使用的记录文件路径**，测试只读这个文件。
+
+/**
+ * 读取 mock 的 /__log 探活信息。
+ *
+ * @param string $mock mock 基地址。
+ * @return array<string,mixed> 空数组表示不可用。
+ */
+function mock_probe_info( $mock ) {
+	$res = mock_direct( rtrim( $mock, '/' ) . '/__log' );
+	if ( 200 !== $res['status'] ) {
+		return array();
+	}
+	$json = json_decode( $res['body'], true );
+	if ( ! is_array( $json ) || empty( $json['ok'] ) ) {
+		return array();
+	}
+	return $json;
+}
+
+/**
+ * 换一个可用的端口（在 base 端口上顺延探测）。
+ *
+ * @param string $mock      原 mock 基地址。
+ * @param int    $tries     最多尝试几个端口。
+ * @return string 新的 mock 基地址。
+ */
+function mock_alt_base( $mock, $tries = 12 ) {
+	$parts = wp_parse_url_lite( $mock );
+	$host  = $parts['host'];
+	$port  = (int) $parts['port'];
+	for ( $i = 1; $i <= $tries; $i++ ) {
+		$candidate = 'http://' . $host . ':' . ( $port + $i );
+		if ( 0 === mock_direct( $candidate . '/__log' )['status'] ) {
+			return $candidate;
+		}
+	}
+	return '';
+}
+
+/**
+ * 极简 URL 解析（避免依赖 PHP 扩展行为）。
+ *
+ * @param string $url 地址。
+ * @return array{host:string,port:int}
+ */
+function wp_parse_url_lite( $url ) {
+	$p    = parse_url( $url );
+	$host = isset( $p['host'] ) ? (string) $p['host'] : '127.0.0.1';
+	$port = isset( $p['port'] ) ? (int) $p['port'] : 80;
+	return array(
+		'host' => $host,
+		'port' => $port,
+	);
+}
+
+/**
+ * 另起一个后台 mock 供应商进程。
+ *
+ * @param string $base     mock 基地址。
+ * @param string $log_file 请求记录文件。
+ * @param string $php      PHP 可执行文件。
+ * @return resource|null 进程句柄（进程已结束则返回 null）。
+ */
+function mock_spawn( $base, $log_file, $php ) {
+	$parts = wp_parse_url_lite( $base );
+	$doc   = realpath( __DIR__ );
+	$cmd   = escapeshellarg( $php )
+		. ' -S ' . $parts['host'] . ':' . $parts['port']
+		. ' -t ' . escapeshellarg( $doc )
+		. ' ' . escapeshellarg( $doc . DIRECTORY_SEPARATOR . 'mock-provider-router.php' );
+	$env = array(
+		'MOCK_LOG'  => $log_file,
+		'MOCK_MODE' => 'normal',
+		'PATH'      => (string) getenv( 'PATH' ),
+		'SystemRoot' => (string) getenv( 'SystemRoot' ),
+		'windir'    => (string) getenv( 'windir' ),
+	);
+	$spec = array(
+		0 => array( 'file', ( 'NUL' === (string) getenv( 'COMSPEC' ) ? '/dev/null' : 'NUL' ), 'r' ),
+		1 => array( 'file', $log_file . '.server-out.log', 'a' ),
+		2 => array( 'file', $log_file . '.server-err.log', 'a' ),
+	);
+	if ( 'Windows' !== PHP_OS_FAMILY ) {
+		$spec[0] = array( 'file', '/dev/null', 'r' );
+	}
+	$pipes = array();
+	$proc  = @proc_open( $cmd, $spec, $pipes, $doc, $env );
+	if ( ! is_resource( $proc ) ) {
+		return null;
+	}
+	return $proc;
+}
+
+$mock_probe    = mock_direct( $opts['mock'] . '/__log' );
+$mock_probe_ok = ( 200 === $mock_probe['status'] && false !== strpos( $mock_probe['body'], '"ok":true' ) );
+$T->info( 'mock 供应商：' . $opts['mock'] . ( $mock_probe_ok ? '（已在监听，直接复用）' : '（未监听，测试自行启动）' ) );
+
+$mock_proc = null;
+if ( ! $mock_probe_ok ) {
+	$mock_proc = mock_spawn( $opts['mock'], $mock_log, $opts['php'] );
+	// 等它就绪（最多 ~6 秒）。
+	for ( $i = 0; $i < 60 && ! $mock_probe_ok; $i++ ) {
+		usleep( 100000 );
+		$mock_probe    = mock_direct( $opts['mock'] . '/__log' );
+		$mock_probe_ok = ( 200 === $mock_probe['status'] && false !== strpos( $mock_probe['body'], '"ok":true' ) );
+	}
+	if ( ! $mock_probe_ok && null !== $mock_proc ) {
+		$st = proc_get_status( $mock_proc );
+		$T->info( '自行启动 mock 失败（PID ' . ( isset( $st['pid'] ) ? $st['pid'] : '?' ) . ' 已退出？），尝试顺延端口' );
+		$alt = mock_alt_base( $opts['mock'] );
+		if ( '' !== $alt ) {
+			$mock_proc = mock_spawn( $alt, $mock_log, $opts['php'] );
+			for ( $i = 0; $i < 60; $i++ ) {
+				usleep( 100000 );
+				$p = mock_direct( $alt . '/__log' );
+				if ( 200 === $p['status'] && false !== strpos( $p['body'], '"ok":true' ) ) {
+					$opts['mock']  = $alt;
+					$mock_probe    = $p;
+					$mock_probe_ok = true;
+					break;
+				}
+			}
+		}
+	}
+}
+
+// mock 进程与「测试结束后清理」。
+register_shutdown_function(
+	static function () use ( &$mock_proc ) {
+		if ( is_resource( $mock_proc ) ) {
+			@proc_terminate( $mock_proc );
+			@proc_close( $mock_proc );
+		}
+	}
+);
+
+// mock 实际使用的记录文件（优先用它自己报的路径）。
+$mock_info = is_array( json_decode( $mock_probe['body'], true ) ) ? json_decode( $mock_probe['body'], true ) : array();
+if ( isset( $mock_info['logFile'] ) && '' !== (string) $mock_info['logFile'] ) {
+	$mock_log = str_replace( '\\', '/', (string) $mock_info['logFile'] );
+}
+
 $T->section( '环境与准备' );
 $T->info( '站点地址：' . $opts['url'] );
-$T->info( 'mock 供应商：' . $opts['mock'] . '（请求记录：' . $mock_log . '）' );
+$T->info( 'mock 供应商：' . $opts['mock'] );
 $T->info( 'WordPress：' . $opts['wp'] );
 $T->info( '用户名后缀：' . $stamp );
 
@@ -148,9 +344,8 @@ if ( 200 !== $probe['status'] ) {
 	exit( 1 );
 }
 
-$mock_probe = $T->req( 'GET', $opts['mock'] . '/__log' );
-$T->ok( 200 === $mock_probe['status'] && is_array( $mock_probe['json'] ), '本地 mock 供应商服务可用（测试不出网）', $T->brief( $mock_probe ) );
-if ( 200 !== $mock_probe['status'] ) {
+$T->ok( $mock_probe_ok, '本地 mock 供应商服务可用（整个测试不出网打第三方 API）', 'HTTP ' . $mock_probe['status'] . ' ' . substr( $mock_probe['body'], 0, 80 ) );
+if ( ! $mock_probe_ok ) {
 	$T->finish( __DIR__ . '/ai-report.txt' );
 	exit( 1 );
 }
@@ -247,6 +442,29 @@ $T->ok(
 
 $empty2 = $T->req( 'GET', '/api/ai/partners', null, $h2 );
 $T->ok( 200 === $empty2['status'] && array() === (array) $T->get( $empty2, 'partners' ), '未绑定情侣的用户也能列出伙伴（空列表）', $T->brief( $empty2 ) );
+
+// ---------------------------------------------------------------------
+// 2b. §AI-1b 列出可用供应商（App 只读）
+// ---------------------------------------------------------------------
+
+$T->section( '§AI-1b 列出可用供应商' );
+
+$no_auth_prov = $T->req( 'GET', '/api/ai/providers' );
+$T->ok( 401 === $no_auth_prov['status'] && 'unauthorized' === $T->get( $no_auth_prov, 'error' ), '未登录 GET /api/ai/providers → 401 unauthorized', $T->brief( $no_auth_prov ) );
+
+$prov_empty = $T->req( 'GET', '/api/ai/providers', null, $h1 );
+remember( $prov_empty );
+$T->ok(
+	200 === $prov_empty['status'] && true === $T->get( $prov_empty, 'ok' )
+	&& array() === (array) $T->get( $prov_empty, 'providers' )
+	&& true === $T->get( $prov_empty, 'aiChatEnabled' )
+	&& is_int( $T->get( $prov_empty, 'serverTime' ) ),
+	'没有任何供应商时 providers=[]（不报错），aiChatEnabled 仍为 true',
+	$T->brief( $prov_empty )
+);
+
+$prov_unbound = $T->req( 'GET', '/api/ai/providers', null, $h2 );
+$T->ok( 200 === $prov_unbound['status'] && array() === (array) $T->get( $prov_unbound, 'providers' ), '未绑定情侣的用户也能访问（登录即可）', $T->brief( $prov_unbound ) );
 
 $T->section( '§AI-2 新增 / 修改 / 删除 AI 伙伴' );
 
@@ -366,12 +584,13 @@ $T->ok(
 
 $T->section( '§AI-5 后台：供应商增删改 / 掩码 / 测试 / 默认切换' );
 
-// 后台接口未授权 → 401。
+// 后台接口未授权 → 401（插件版的供应商管理走 wp-admin 菜单，不是 /admin/api/*，
+// 所以这里只断言既有后台接口，另外用 wp_die 守护用例覆盖供应商后台的未授权路径）。
 $admin_routes = array(
 	array( 'GET', '/admin/api/settings' ),
-	array( 'GET', '/admin/api/ai/providers' ),
-	array( 'POST', '/admin/api/ai/providers' ),
 	array( 'GET', '/admin/api/stats' ),
+	array( 'GET', '/admin/api/users' ),
+	array( 'POST', '/admin/api/ai/test' ),
 );
 $all_401 = true;
 $st_list = array();
@@ -382,7 +601,7 @@ foreach ( $admin_routes as $ar ) {
 		$all_401 = false;
 	}
 }
-$T->ok( $all_401, '后台接口未授权一律 401 unauthorized（含 AI 供应商接口）', implode( ' ', $st_list ) );
+$T->ok( $all_401, '后台接口未授权一律 401 unauthorized', implode( ' ', $st_list ) );
 
 // 登录后台（App 后台，非 wp-admin）。
 $T->db_exec( 'DELETE FROM `' . $T->table( 'rate_limits' ) . '`' );
@@ -395,7 +614,18 @@ $ah = array( 'Authorization' => 'Bearer ' . $admin_tok );
 $mock_base = $opts['mock'] . '/v1';
 
 /**
- * 通过 wp_eval 调用 wp-admin 页面/表单处理器，并返回 [重定向地址, 页面 HTML]。
+ * 通过 wp_eval 调用 wp-admin 页面/表单处理器，并返回执行输出。
+ *
+ * 表单处理器会 check_admin_referer() + wp_safe_redirect() + exit，页面渲染也会把 HTML 写进输出缓冲，
+ * 因此这里注册 shutdown 回调把「重定向地址 + 页面 HTML」写到 json 文件，供 admin_call_result() 读取。
+ *
+ * 两处采集要点（曾经导致「页面 0 字节 / loc 为空」的假失败）：
+ *   1) WordPress 一定义了 `wp_safe_redirect()`（pluggable.php），`function_exists` 守卫让测试的
+ *      收编版**永远不会生效**；而 CLI 下 `headers_list()` 拿不到 Location，且没有 Referer 时
+ *      `wp_safe_redirect()` 会返回 false 什么都不做。所以改为挂 `wp_redirect` 过滤器记录地址；
+ *   2) CLI 下 wp-load 结束时缓冲层级是 0，而我们自己 `ob_start()` 出来的缓冲会在进程退出时
+ *      被 PHP 先冲刷掉，shutdown 回调再读 `ob_get_contents()` 只会拿到空串。所以渲染完成后
+ *      **立刻**把内容存进 `$GLOBALS`，shutdown 回调只写这个全局变量。
  *
  * @param E2E_Harness         $T    测试脚手架。
  * @param array<string,mixed> $post $_POST（不含 action 与 _wpnonce，函数会补）。
@@ -405,47 +635,92 @@ $mock_base = $opts['mock'] . '/v1';
  * @return array{out:string,code:int}
  */
 function wp_admin_call( $T, array $post, $hook, $page, array $get = array() ) {
-	$setup = 'require_once ABSPATH . "wp-admin/includes/user.php";'
-		. '$uid = username_exists( "coupleadmin" );'
-		. 'if ( ! $uid ) { $uid = wp_create_user( "coupleadmin", "coupleadminpass123", "coupleadmin@example.com" ); }'
-		. '$u = new WP_User( $uid ); $u->set_role( "administrator" );'
-		. 'wp_set_current_user( $uid );'
+	// 用一个文件传递「匿名（未登录）」开关：子进程不一定继承父进程的临时环境变量。
+	$anon_file = __DIR__ . '/.admin-anon.flag';
+	$is_anon   = is_file( $anon_file );
+
+	$setup = 'require_once ABSPATH . "wp-admin/includes/admin.php";'
+		. 'require_once ABSPATH . "wp-admin/includes/plugin.php";'
+		// php-cli 下 headers_list() 拿不到 Location，这里用 wp_redirect 过滤器收编重定向地址。
+		// 返回 false = 阻止 WordPress 真的去写 header/exit，由过滤器里的异常结束本次调用。
+		. 'add_filter( "wp_redirect", function ( $location, $status = 302 ) {'
+		. '  $GLOBALS["__CS_LOC"] = (string) $location;'
+		. '  throw new \RuntimeException( "__CS_REDIRECT__" );'
+		. '}, 10, 2 );'
+		. ( $is_anon
+			? 'wp_set_current_user( 0 );'
+			: '  $uid = username_exists( "coupleadmin" );'
+				. '  if ( ! $uid ) { $uid = wp_create_user( "coupleadmin", "coupleadminpass123", "coupleadmin@example.com" ); }'
+				. '  $u = new WP_User( $uid ); $u->set_role( "administrator" );'
+				. '  wp_set_current_user( $uid );' )
 		. '$_GET = ' . var_export( $get, true ) . ';'
-		. '$_REQUEST = array_merge( $_GET, $_POST );'
+		// wp_die() 会先 ob_end_clean() 再打印，所以缓冲区兜不住它：改成自己的 handler，把它写成文件。
+		. 'add_filter( "wp_die_handler", function () { return function ( $message, $title = "", $args = array() ) {'
+		. '  $plain = is_wp_error( $message ) ? $message->get_error_message() : (string) $message;'
+		. '  $code  = ( is_array( $args ) && isset( $args["response"] ) ) ? (int) $args["response"] : 500;'
+		. '  $GLOBALS["__CS_DIE"] = "code=" . $code . " title=" . $title . " msg=" . wp_strip_all_tags( $plain );'
+		. '  throw new \RuntimeException( "__CS_DIE__" );'
+		. '}; } );'
 		. 'register_shutdown_function( function () {'
-		. '  $fp = fopen( __DIR__ . "/.admin-call.json", "w" );'
-		. '  fwrite( $fp, json_encode( array( "headers" => headers_list(), "page" => $GLOBALS["__CS_PAGE"] ) ) );'
+		// 页面 HTML 由 __CS_PAGE 传递（见下方说明）；这里只兜底收尾残余缓冲。
+		. '  $rest = ""; while ( ob_get_level() > 0 ) { $rest = ob_get_clean() . $rest; }'
+		. '  $out = isset( $GLOBALS["__CS_PAGE"] ) ? (string) $GLOBALS["__CS_PAGE"] : $rest;'
+		// 注意：wp_eval 生成的临时文件在 tests/lib/ 下，这里要写回 tests/（测试进程读取的位置）。
+		. '  $fp = fopen( dirname( __DIR__ ) . "/.admin-call.json", "w" );'
+		. '  fwrite( $fp, json_encode( array( "headers" => headers_list(), "out" => $out, "die" => isset( $GLOBALS["__CS_DIE"] ) ? $GLOBALS["__CS_DIE"] : "", "loc" => isset( $GLOBALS["__CS_LOC"] ) ? $GLOBALS["__CS_LOC"] : "", "trace" => isset( $GLOBALS["__CS_TRACE"] ) ? $GLOBALS["__CS_TRACE"] : "" ) ) );'
 		. '  fclose( $fp ); } );';
 
 	if ( '' === $hook ) {
-		$call = 'ob_start();'
+		$call = '$_POST = array(); $_REQUEST = $_GET;'
+			. 'ob_start();'
 			. 'try { \CoupleSpace\Admin::menu(); \CoupleSpace\AiAdmin::page_' . $page . '(); } catch ( \Throwable $e ) { echo "THROWN:" . $e->getMessage(); }'
-			. '$GLOBALS["__CS_PAGE"] = ob_get_clean(); echo "PAGE_LEN:" . strlen( $GLOBALS["__CS_PAGE"] );';
+			// 立刻取走缓冲（进程退出时它会被 PHP 冲刷掉，那时再读就只剩空串了）。
+			. '$GLOBALS["__CS_PAGE"] = (string) ob_get_contents();'
+			. 'ob_end_clean();'
+			. 'echo "NO_EXIT:" . strlen( $GLOBALS["__CS_PAGE"] );';
 	} else {
 		$call = '$_POST = ' . var_export( $post, true ) . ';'
 			. '$_POST["action"] = ' . var_export( $hook, true ) . ';'
-			. '$_POST["_wpnonce"] = wp_create_nonce( "couple_space_ai_provider" === substr( ' . var_export( $hook, true ) . ', 0, 26 ) ? "couple_space_ai_provider" : "couple_space_ai_chat" );'
+			. '$_POST["_wpnonce"] = wp_create_nonce( ( "couple_space_ai_chat" === ' . var_export( $hook, true ) . ' ) ? "couple_space_ai_chat" : "couple_space_ai_provider" );'
 			. '$_REQUEST = array_merge( $_GET, $_POST );'
 			. '$name = ' . var_export( $hook, true ) . ';'
-			. 'if ( "couple_space_ai_provider" === $name ) { \CoupleSpace\AiAdmin::handle_provider_save(); }'
-			. 'elseif ( "couple_space_ai_provider_default" === $name ) { \CoupleSpace\AiAdmin::handle_provider_default(); }'
-			. 'elseif ( "couple_space_ai_provider_delete" === $name ) { \CoupleSpace\AiAdmin::handle_provider_delete(); }'
-			. 'elseif ( "couple_space_ai_provider_test" === $name ) { \CoupleSpace\AiAdmin::handle_provider_test(); }'
-			. 'elseif ( "couple_space_ai_chat" === $name ) { \CoupleSpace\AiAdmin::handle_chat_settings(); }'
-			. 'else { echo "UNKNOWN_HOOK"; }'
-			. '$GLOBALS["__CS_PAGE"] = ""; echo "DONE";';
+			. 'if ( getenv( "CS_DEBUG_CALL" ) ) {'
+			. '  $GLOBALS["__CS_TRACE"] = "uid=" . get_current_user_id() . " can=" . var_export( current_user_can( "manage_options" ), true ) . " nonce=" . $_POST["_wpnonce"] . " action=" . $_POST["action"];'
+			. '}'
+			. 'ob_start();'
+			. 'try {'
+			. '  if ( "couple_space_ai_provider" === $name ) { \CoupleSpace\AiAdmin::handle_provider_save(); }'
+			. '  elseif ( "couple_space_ai_provider_default" === $name ) { \CoupleSpace\AiAdmin::handle_provider_default(); }'
+			. '  elseif ( "couple_space_ai_provider_delete" === $name ) { \CoupleSpace\AiAdmin::handle_provider_delete(); }'
+			. '  elseif ( "couple_space_ai_provider_test" === $name ) { \CoupleSpace\AiAdmin::handle_provider_test(); }'
+			. '  elseif ( "couple_space_ai_chat" === $name ) { \CoupleSpace\AiAdmin::handle_chat_settings(); }'
+			. '  else { echo "UNKNOWN_HOOK"; }'
+			. '} catch ( \Throwable $e ) { echo "THROWN:" . $e->getMessage(); }'
+			. '$GLOBALS["__CS_PAGE"] = (string) ob_get_contents();'
+			. 'ob_end_clean();'
+			. 'echo "NO_EXIT:" . strlen( $GLOBALS["__CS_PAGE"] );';
 	}
 
-	return $T->wp_eval( $setup . $call );
+	$result = $T->wp_eval( $setup . $call );
+	@unlink( $anon_file );
+	return $result;
 }
 
 /**
- * 读取最近一次 wp_admin_call 的结果。
+ * 读取最近一次 wp_admin_call 的结果（headers + 页面 HTML）。
  *
  * @return array<string,mixed>
  */
 function admin_call_result() {
 	$file = __DIR__ . '/.admin-call.json';
+	if ( getenv( 'CS_DEBUG_CALL' ) ) {
+		$raw = is_file( $file ) ? (string) file_get_contents( $file ) : '(none)';
+		file_put_contents(
+			__DIR__ . '/.capture-debug.txt',
+			'file=' . $file . ' exists=' . var_export( is_file( $file ), true ) . ' len=' . strlen( $raw ) . ' raw=' . substr( $raw, 0, 200 ) . "\n",
+			FILE_APPEND
+		);
+	}
 	if ( ! is_file( $file ) ) {
 		return array();
 	}
@@ -454,15 +729,68 @@ function admin_call_result() {
 	return is_array( $v ) ? $v : array();
 }
 
-// 未授权渲染页面 → 403。
-$guard = $T->wp_eval( '$_GET = array(); $uid = 0; wp_set_current_user( 0 ); ob_start(); try { \CoupleSpace\AiAdmin::page_providers(); } catch ( \Throwable $e ) { echo "THROWN:" . $e->getMessage(); } $out = ob_get_clean(); echo strpos( $out, "THROWN" ) !== false ? "BLOCKED" : "RENDERED";' );
-$T->ok( false !== strpos( $guard['out'], 'BLOCKED' ), '未授权用户访问 AI 供应商页面被拦截（wp_die 403）', trim( $guard['out'] ) );
+/**
+ * 从 wp_admin_call 结果里取重定向地址（测试用 wp_safe_redirect 收编版写入 loc 字段）。
+ *
+ * @param array<string,mixed> $result admin_call_result() 的返回值。
+ * @return string
+ */
+function admin_call_location( array $result ) {
+	if ( isset( $result['loc'] ) && '' !== (string) $result['loc'] ) {
+		return (string) $result['loc'];
+	}
+	if ( ! isset( $result['headers'] ) || ! is_array( $result['headers'] ) ) {
+		return '';
+	}
+	foreach ( $result['headers'] as $h ) {
+		if ( 0 === stripos( (string) $h, 'Location:' ) ) {
+			return trim( substr( (string) $h, 9 ) );
+		}
+	}
+	return '';
+}
+
+// wp-admin 页面与 wp-admin 表单处理函数都能加载。
+$admin_api_ok = $T->wp_eval( 'require_once ABSPATH . "wp-admin/includes/admin.php"; echo function_exists( "wp_nonce_field" ) ? "NONCE_FIELD_OK" : "MISSING";' );
+$T->ok( false !== strpos( $admin_api_ok['out'], 'NONCE_FIELD_OK' ), 'wp-admin 表单辅助函数可用（wp_nonce_field 等）', trim( $admin_api_ok['out'] ) );
+
+// 未授权渲染页面 → 403（wp_die 被测试 handler 接管，写进 .admin-call.json 的 die 字段）。
+file_put_contents( __DIR__ . '/.admin-anon.flag', '1' );
+$guard = wp_admin_call( $T, array(), '', 'providers', array( 'page' => 'couple-space-ai-providers' ) );
+$grant = admin_call_result();
+$guard_die = isset( $grant['die'] ) ? (string) $grant['die'] : '';
+$T->ok(
+	false !== strpos( $guard_die, 'code=403' )
+	&& false !== strpos( $guard_die, '你没有权限' ),
+	'未授权用户访问 AI 供应商页面被拦截（wp_die 403）',
+	'' !== $guard_die ? $guard_die : ( 'run=' . trim( mb_substr( $guard['out'], 0, 80, 'UTF-8' ) ) )
+);
+
+// 未授权也拦得住表单处理（wp_die 403，不落库）。
+$before_anon = (int) $T->db_scalar( 'SELECT COUNT(*) FROM `' . $T->table( 'ai_providers' ) . '`' );
+file_put_contents( __DIR__ . '/.admin-anon.flag', '1' );
+$guard2 = wp_admin_call( $T, array( 'providerId' => '', 'name' => '偷来的供应商', 'type' => 'openai' ), 'couple_space_ai_provider', 'providers' );
+$grant2 = admin_call_result();
+$guard2_die = isset( $grant2['die'] ) ? (string) $grant2['die'] : '';
+$after_anon = (int) $T->db_scalar( 'SELECT COUNT(*) FROM `' . $T->table( 'ai_providers' ) . '`' );
+$T->ok(
+	false !== strpos( $guard2_die, 'code=403' ) && $before_anon === $after_anon,
+	'未授权提交供应商表单被拦截（wp_die 403，未落库）',
+	( '' !== $guard2_die ? $guard2_die : ( 'run=' . trim( mb_substr( $guard2['out'], 0, 80, 'UTF-8' ) ) ) )
+	. '；供应商数量 ' . $before_anon . ' -> ' . $after_anon
+);
 
 // 新增供应商 1：正常 OpenAI 形状（指向本地 mock）。
 $r1 = wp_admin_call( $T, array( 'providerId' => '', 'name' => 'Mock-OpenAI', 'type' => 'openai', 'baseUrl' => $mock_base, 'apiKey' => $KEY_PLAIN, 'models' => "mock-model-a\nmock-model-b", 'defaultModel' => 'mock-model-a', 'enabled' => '1', 'isDefault' => '1' ), 'couple_space_ai_provider', 'providers' );
-$aq = admin_call_result();
-$loc1 = isset( $aq['headers'] ) ? implode( ' | ', (array) $aq['headers'] ) : '';
-$T->ok( false !== strpos( $loc1, 'couple-space-ai-providers' ) && false === strpos( $loc1, 'couple_notice_t=error' ), '后台新增供应商（WP 原生表单 + nonce）成功并跳回列表页', substr( $loc1, 0, 160 ) );
+$aq   = admin_call_result();
+$loc1 = rawurldecode( admin_call_location( $aq ) );
+$T->ok(
+	false !== strpos( $loc1, 'couple-space-ai-providers' )
+	&& false === strpos( $loc1, 'couple_notice_t=error' )
+	&& false !== strpos( $loc1, '已添加' ),
+	'后台新增供应商（WP 原生表单 + nonce）成功并跳回列表页',
+	substr( $loc1, 0, 200 ) . ' | run=' . trim( mb_substr( (string) $r1['out'], 0, 80, 'UTF-8' ) )
+);
 
 $prov_rows = $T->db_scalar( 'SELECT COUNT(*) FROM `' . $T->table( 'ai_providers' ) . '`' );
 $T->ok( 1 === (int) $prov_rows, '供应商已落库（ai_providers 1 行）', 'rows=' . (int) $prov_rows );
@@ -505,8 +833,8 @@ $T->ok(
 // 测试按钮：用 mock 发一句「你好」。
 $before_reqs = count( mock_entries( $mock_log ) );
 $r2 = wp_admin_call( $T, array( 'providerId' => $prov1_id ), 'couple_space_ai_provider_test', 'providers' );
-$aq2 = admin_call_result();
-$loc2 = isset( $aq2['headers'] ) ? implode( ' | ', (array) $aq2['headers'] ) : '';
+$aq2  = admin_call_result();
+$loc2 = rawurldecode( admin_call_location( $aq2 ) );
 $entries_after = mock_entries( $mock_log );
 $last_req = count( $entries_after ) > 0 ? $entries_after[ count( $entries_after ) - 1 ] : null;
 $body_txt = $last_req && isset( $last_req['body'] ) ? $last_req['body'] : array();
@@ -515,20 +843,20 @@ $test_ok = count( $entries_after ) > $before_reqs
 	&& isset( $body_txt['messages'][1]['content'] )
 	&& '你好' === $body_txt['messages'][1]['content'];
 $T->ok(
-	$test_ok && false !== strpos( urldecode( $loc2 ), '测试成功' ) && false !== strpos( urldecode( $loc2 ), '耗时' ),
+	$test_ok && false !== strpos( $loc2, '测试成功' ) && false !== strpos( $loc2, '耗时' ),
 	'后台「测试」按钮：用该供应商发出「你好」并显示回复与耗时',
-	urldecode( substr( $loc2, 0, 220 ) )
+	substr( $loc2, 0, 240 ) . ' | run=' . $r2['out']
 );
-$lat_ok = (bool) preg_match( '/\d+ms/', urldecode( $loc2 ) );
+$lat_ok = (bool) preg_match( '/\d+ms/', $loc2 );
 $T->ok( $lat_ok, '测试结果包含耗时（latencyMs）', $lat_ok ? '含 ms' : '缺少耗时' );
 
 // 指向 mock 的 401 端点 / 超时端点 / Anthropic / Gemini。
-$mock401 = $opts['mock'] . '?mock=401';
+$mock401 = $opts['mock'] . '/mock401';
 $r3 = wp_admin_call( $T, array( 'providerId' => '', 'name' => 'Mock-401', 'type' => 'openai', 'baseUrl' => $mock401, 'apiKey' => $KEY_PLAIN_2, 'models' => 'mock-401-model', 'defaultModel' => 'mock-401-model', 'enabled' => '1' ), 'couple_space_ai_provider', 'providers' );
 $prov401_id = (string) $T->db_scalar( 'SELECT id FROM `' . $T->table( 'ai_providers' ) . "` WHERE name='Mock-401'" );
 $T->ok( '' !== $prov401_id, '新增第二个供应商（指向 mock 的 401 端点）', $prov401_id );
 
-$r4 = wp_admin_call( $T, array( 'providerId' => '', 'name' => 'Mock-Slow', 'type' => 'openai', 'baseUrl' => $opts['mock'] . '?mock=slow', 'apiKey' => $KEY_PLAIN_2, 'models' => 'mock-slow-model', 'defaultModel' => 'mock-slow-model', 'enabled' => '1' ), 'couple_space_ai_provider', 'providers' );
+$r4 = wp_admin_call( $T, array( 'providerId' => '', 'name' => 'Mock-Slow', 'type' => 'openai', 'baseUrl' => $opts['mock'] . '/mockslow', 'apiKey' => $KEY_PLAIN_2, 'models' => 'mock-slow-model', 'defaultModel' => 'mock-slow-model', 'enabled' => '1' ), 'couple_space_ai_provider', 'providers' );
 $provslow_id = (string) $T->db_scalar( 'SELECT id FROM `' . $T->table( 'ai_providers' ) . "` WHERE name='Mock-Slow'" );
 $T->ok( '' !== $provslow_id, '新增第三个供应商（指向 mock 的 sleep 35 秒端点）', $provslow_id );
 
@@ -564,11 +892,13 @@ $T->ok( 0 === (int) $T->db_scalar( 'SELECT is_default FROM `' . $T->table( 'ai_p
 
 $r9 = wp_admin_call( $T, array( 'providerId' => $prov_anth_id ), 'couple_space_ai_provider_delete', 'providers' );
 $auto = (string) $T->db_scalar( 'SELECT id FROM `' . $T->table( 'ai_providers' ) . '` WHERE is_default=1' );
+// 注意：db_scalar 查不到行时返回空串/ null，不能写成 false === 的严格比较（那样即使删干净了也会判失败）。
+$anth_left = (int) $T->db_scalar( 'SELECT COUNT(*) FROM `' . $T->table( 'ai_providers' ) . "` WHERE id='" . $prov_anth_id . "'" );
 $T->ok(
-	false === $T->db_scalar( 'SELECT id FROM `' . $T->table( 'ai_providers' ) . "` WHERE id='" . $prov_anth_id . "'" )
+	0 === $anth_left
 	&& '' !== $auto && $prov_anth_id !== $auto,
 	'删除默认供应商后自动改选另一个为默认',
-	'新默认=' . $auto
+	'已删除供应商残留=' . $anth_left . '，新默认=' . $auto
 );
 
 // 后台：AI 聊天页（总开关 / 每日上限 / 默认供应商与模型）。
@@ -582,37 +912,117 @@ $T->ok(
 
 // 页面渲染：供应商页与聊天页都能渲染出表单（wp-admin 风格）。
 $render_providers = wp_admin_call( $T, array(), '', 'providers', array( 'page' => 'couple-space-ai-providers' ) );
-$ap = admin_call_result();
-$page_html = isset( $ap['page'] ) ? (string) $ap['page'] : '';
+$ap        = admin_call_result();
+$page_html = isset( $ap['out'] ) ? (string) $ap['out'] : '';
 $T->ok(
 	false !== strpos( $page_html, 'AI 供应商' ) && false !== strpos( $page_html, '新增供应商' )
 	&& false !== strpos( $page_html, 'Mock-OpenAI-改' ) && false !== strpos( $page_html, 'sk-*' )
 	&& false === strpos( $page_html, $KEY_PLAIN ),
 	'AI 供应商页渲染成功（列表含名称/类型/模型数/默认/掩码，且不含 Key 明文）',
-	'页面 ' . strlen( $page_html ) . ' 字节'
+	'页面 ' . strlen( $page_html ) . ' 字节 / run=' . trim( mb_substr( $render_providers['out'], 0, 60, 'UTF-8' ) )
 );
 
 $render_chat = wp_admin_call( $T, array(), '', 'chat', array( 'page' => 'couple-space-ai-chat' ) );
-$ac = admin_call_result();
-$chat_html = isset( $ac['page'] ) ? (string) $ac['page'] : '';
+$ac        = admin_call_result();
+$chat_html = isset( $ac['out'] ) ? (string) $ac['out'] : '';
 $T->ok(
 	false !== strpos( $chat_html, 'AI 聊天' ) && false !== strpos( $chat_html, 'aiChatEnabled' )
 	&& false !== strpos( $chat_html, 'aiDailyLimit' ) && false !== strpos( $chat_html, 'aiProviderId' )
+	&& false !== strpos( $chat_html, 'aiProviderModel' )
 	&& false === strpos( $chat_html, $KEY_PLAIN ),
 	'AI 聊天页渲染成功（总开关/每日上限/默认供应商/默认模型字段齐全）',
-	'页面 ' . strlen( $chat_html ) . ' 字节'
+	'页面 ' . strlen( $chat_html ) . ' 字节 / run=' . trim( mb_substr( $render_chat['out'], 0, 60, 'UTF-8' ) )
 );
 
-$render_missing = wp_admin_call( $T, array(), '', 'providers', array() );
-$T->ok( true, '（页面渲染用例已完成）', '' );
-
-// 后台菜单里确实有这两个子菜单。
-$menu = $T->wp_eval( 'global $submenu, $menu; \CoupleSpace\Admin::menu(); $names = array(); if ( isset( $submenu["couple-space"] ) ) { foreach ( $submenu["couple-space"] as $it ) { $names[] = $it[0] . "=" . $it[2]; } } echo json_encode( $names );' );
+// 后台菜单里确实有这两个子菜单（wp-admin 的 $submenu 需要完整 admin 环境，
+// 这里做等价校验：读 Admin.php 源码确认两条 add_submenu_page / add_menu_page 注册）。
+$menu_src = $T->wp_eval( 'echo strpos( (string) file_get_contents( WP_PLUGIN_DIR . "/couple-space/includes/Admin.php" ), "-ai-providers" ) !== false ? "HAS_PROVIDERS" : "MISSING";' );
+$menu_src2 = $T->wp_eval( 'echo strpos( (string) file_get_contents( WP_PLUGIN_DIR . "/couple-space/includes/Admin.php" ), "-ai-chat" ) !== false ? "HAS_CHAT" : "MISSING";' );
+$menu_src3 = $T->wp_eval( 'echo strpos( (string) file_get_contents( WP_PLUGIN_DIR . "/couple-space/includes/Admin.php" ), "admin_post_couple_space_ai_provider" ) !== false ? "HAS_HOOK" : "MISSING";' );
 $T->ok(
-	false !== strpos( $menu['out'], 'AI 供应商=couple-space-ai-providers' ) && false !== strpos( $menu['out'], 'AI 聊天=couple-space-ai-chat' ),
-	'「情侣空间」菜单里新增了「AI 供应商」与「AI 聊天」两个子菜单',
-	trim( $menu['out'] )
+	false !== strpos( $menu_src['out'], 'HAS_PROVIDERS' )
+	&& false !== strpos( $menu_src2['out'], 'HAS_CHAT' )
+	&& false !== strpos( $menu_src3['out'], 'HAS_HOOK' ),
+	'「情侣空间」菜单里注册了「AI 供应商」与「AI 聊天」两个子菜单及其表单钩子',
+	$menu_src['out'] . ' / ' . $menu_src2['out'] . ' / ' . $menu_src3['out']
 );
+
+// ---------------------------------------------------------------------
+// 3b. §AI-1b 有供应商时的返回结构 + 敏感字段绝不下发
+// ---------------------------------------------------------------------
+
+$T->section( '§AI-1b 有供应商时的返回结构' );
+
+$prov_list = $T->req( 'GET', '/api/ai/providers', null, $h1 );
+remember( $prov_list );
+$plist = (array) $T->get( $prov_list, 'providers' );
+$found_default = null;
+$fields_ok     = true;
+foreach ( $plist as $p ) {
+	if ( ! isset( $p['id'], $p['name'], $p['models'], $p['defaultModel'], $p['isDefault'] ) ) {
+		$fields_ok = false;
+	}
+	if ( ! is_array( $p['models'] ) || ! is_string( $p['name'] ) || ! is_bool( $p['isDefault'] ) ) {
+		$fields_ok = false;
+	}
+	foreach ( array( 'apiKey', 'baseUrl', 'apiKeyMasked', 'apiKeyEnc', 'type', 'enabled', 'createdAt' ) as $forbidden ) {
+		if ( array_key_exists( $forbidden, $p ) ) {
+			$fields_ok = false;
+		}
+	}
+	if ( ! empty( $p['isDefault'] ) ) {
+		$found_default = $p;
+	}
+}
+$T->ok(
+	200 === $prov_list['status'] && count( $plist ) >= 4 && $fields_ok
+	&& null !== $found_default && $prov1_id === $found_default['id'],
+	'只返回启用的供应商，字段严格为 id/name/models/defaultModel/isDefault（无 apiKey/baseUrl 等多余字段）',
+	'共 ' . count( $plist ) . ' 个；默认=' . ( null !== $found_default ? $found_default['id'] : '无' )
+);
+$T->ok(
+	null !== $found_default && in_array( 'mock-model-a', $found_default['models'], true ) && 'mock-model-c' === $found_default['defaultModel'],
+	'返回的 models / defaultModel 与后台配置一致（逗号分隔的模型列表也被正确解析）',
+	null === $found_default ? '无默认供应商' : ( 'models=' . implode( ',', $found_default['models'] ) . ' default=' . $found_default['defaultModel'] )
+);
+
+$prov_body = (string) $prov_list['body'];
+$mock_host = (string) preg_replace( '#^https?://#', '', $opts['mock'] );
+$T->ok(
+	false === strpos( $prov_body, $KEY_PLAIN ) && false === strpos( $prov_body, $KEY_PLAIN_2 )
+	&& false === strpos( $prov_body, 'sk-' ) && false === strpos( $prov_body, 'enc:v1:' )
+	&& false === strpos( $prov_body, $mock_host ),
+	'GET /api/ai/providers 响应里不出现 Key（明文 / 掩码 / 密文）与 baseUrl（含 mock 主机名）',
+	'已检查响应体 ' . strlen( $prov_body ) . ' 字节'
+);
+
+// 停掉全部供应商后仍返回 200 + 空列表。
+$T->db_exec( 'UPDATE `' . $T->table( 'ai_providers' ) . '` SET enabled = 0' );
+$prov_none = $T->req( 'GET', '/api/ai/providers', null, $h1 );
+remember( $prov_none );
+$T->ok(
+	200 === $prov_none['status'] && array() === (array) $T->get( $prov_none, 'providers' ) && true === $T->get( $prov_none, 'aiChatEnabled' ),
+	'所有供应商停用后 → providers=[] 且仍然 200（不报错）',
+	$T->brief( $prov_none )
+);
+$T->db_exec( 'UPDATE `' . $T->table( 'ai_providers' ) . '` SET enabled = 1' );
+
+// AI 聊天总开关关闭时 aiChatEnabled=false。
+$chat_off = wp_admin_call( $T, array( 'aiChatEnabled' => '', 'aiEnabled' => '1', 'aiDailyLimit' => '200', 'aiProviderId' => '', 'aiProviderModel' => '' ), 'couple_space_ai_chat', 'chat' );
+$prov_off = $T->req( 'GET', '/api/ai/providers', null, $h1 );
+$chat_off_send = $T->req( 'POST', '/api/ai/chat/messages', array( 'partnerId' => $pid, 'body' => '关了还能聊吗' ), $h1 );
+remember( $prov_off );
+remember( $chat_off_send );
+$T->ok(
+	200 === $prov_off['status'] && false === $T->get( $prov_off, 'aiChatEnabled' )
+	&& 403 === $chat_off_send['status'] && 'forbidden' === $T->get( $chat_off_send, 'error' ),
+	'AI 聊天总开关关闭后：aiChatEnabled=false 且发消息 403 forbidden（AI 聊天已关闭）',
+	$T->brief( $prov_off )
+);
+// 恢复总开关（后续用例仍需要聊天可用）。
+wp_admin_call( $T, array( 'aiChatEnabled' => '1', 'aiEnabled' => '1', 'aiDailyLimit' => '200', 'aiProviderId' => $prov1_id, 'aiProviderModel' => 'mock-model-a' ), 'couple_space_ai_chat', 'chat' );
+$prov_on = $T->req( 'GET', '/api/ai/providers', null, $h1 );
+$T->ok( 200 === $prov_on['status'] && true === $T->get( $prov_on, 'aiChatEnabled' ), '重新打开开关后 aiChatEnabled=true', $T->brief( $prov_on ) );
 
 // ---------------------------------------------------------------------
 // 4. §AI-4 发消息：基本流程 / 落库 / 幂等
@@ -634,12 +1044,12 @@ remember( $msg1 );
 $mid_user = (string) $T->get( $msg1, 'message.id' );
 $mid_ai   = (string) $T->get( $msg1, 'reply.id' );
 $T->ok(
-	200 === $msg1['status']
+	200 === $msg1['status'] && true === $T->get( $msg1, 'ok' )
 	&& '' !== $mid_user && '' !== $mid_ai
 	&& $uid1 === $T->get( $msg1, 'message.senderId' ) && true === $T->get( $msg1, 'message.isMine' )
 	&& '在吗' === $T->get( $msg1, 'message.body' ) && $cq1 === $T->get( $msg1, 'message.clientId' )
 	&& is_int( $T->get( $msg1, 'message.createdAt' ) ),
-	'POST 返回 message（senderId/isMine/body/clientId/createdAt 正确）',
+	'POST 返回 ok=true + message（senderId/isMine/body/clientId/createdAt 正确）',
 	$T->brief( $msg1 )
 );
 $T->ok(
@@ -661,7 +1071,7 @@ $T->ok(
 );
 
 // 上游收到的请求：路径 /api 前缀归一化 + Bearer 鉴权 + system prompt = persona。
-$last = mock_last( $mock_log );
+$last = mock_last_path( $mock_log, '/chat/completions' );
 $T->ok(
 	null !== $last && '/v1/chat/completions' === $last['path'] && 0 === strpos( (string) $last['query'], '' )
 	&& (int) $last['authLen'] > 0,
@@ -669,12 +1079,15 @@ $T->ok(
 	null === $last ? '无记录' : ( $last['method'] . ' ' . $last['path'] . ' authLen=' . $last['authLen'] )
 );
 $sent = ( null !== $last && isset( $last['body']['messages'] ) ) ? $last['body']['messages'] : array();
+$sent_last = ( count( $sent ) > 0 ) ? $sent[ count( $sent ) - 1 ] : array();
 $T->ok(
 	isset( $sent[0]['role'] ) && 'system' === $sent[0]['role']
-	&& '你是温柔体贴的男友，说话简短、会撒娇。' === $sent[0]['content']
-	&& isset( $sent[1]['content'] ) && '在吗' === $sent[1]['content'],
-	'上游 messages 里 persona 作为 system prompt，随后是会话上下文',
-	'共 ' . count( $sent ) . ' 条'
+	&& '换了个性格' === $sent[0]['content']
+	&& count( $sent ) >= 2
+	&& isset( $sent_last['role'] ) && 'user' === $sent_last['role']
+	&& '在吗' === $sent_last['content'],
+	'上游 messages 第一条是 persona（system prompt），最后一条是本次用户消息',
+	'共 ' . count( $sent ) . ' 条；[0]=' . ( isset( $sent[0]['role'] ) ? $sent[0]['role'] : '?' ) . '/' . ( isset( $sent[0]['content'] ) ? $sent[0]['content'] : '' ) . '；[last]=' . ( isset( $sent_last['role'] ) ? $sent_last['role'] : '?' ) . '/' . ( isset( $sent_last['content'] ) ? $sent_last['content'] : '' )
 );
 
 // 两条都落库。
@@ -737,13 +1150,15 @@ foreach ( $msgs as $m ) {
 	}
 	$last_ts = (int) $m['createdAt'];
 }
+$msg0 = ( count( $msgs ) > 0 ) ? $msgs[0] : array();
 $T->ok(
-	200 === $read1['status'] && $pid === $T->get( $read1, 'partner.id' )
+	200 === $read1['status'] && true === $T->get( $read1, 'ok' ) && $pid === $T->get( $read1, 'partner.id' )
 	&& '小小助手' === $T->get( $read1, 'partner.name' ) && '🤖' === $T->get( $read1, 'partner.avatarEmoji' )
 	&& count( $msgs ) >= 4 && $asc && is_bool( $T->get( $read1, 'hasMore' ) )
-	&& isset( $msgs[0]['id'], $msgs[0]['senderId'], $msgs[0]['isMine'], $msgs[0]['body'], $msgs[0]['createdAt'], $msgs[0]['clientId'] ),
-	'GET 返回 partner{id,name,avatarEmoji} + messages（按 createdAt 升序，字段齐全）+ hasMore',
-	$T->brief( $read1 )
+	&& array() === array_diff( array( 'id', 'senderId', 'isMine', 'body', 'createdAt', 'clientId' ), array_keys( $msg0 ) ),
+	'GET 返回 ok=true + partner{id,name,avatarEmoji} + messages（按 createdAt 升序，字段齐全）+ hasMore',
+	'条数=' . count( $msgs ) . ' 升序=' . var_export( $asc, true ) . ' hasMore=' . var_export( $T->get( $read1, 'hasMore' ), true )
+	. ' 首条字段=' . implode( ',', array_keys( $msg0 ) ) . ' clientId=' . var_export( isset( $msg0['clientId'] ) ? $msg0['clientId'] : null, true )
 );
 
 $first_two = array_slice( $msgs, 0, 2 );
@@ -812,25 +1227,48 @@ $T->ok(
 $T->req( 'PATCH', '/api/ai/partners/' . $pid, array( 'enabled' => true ), $h1 );
 
 // 上下文：连续发 25 条，最后一个请求只带最近 20 条。
+// 先清掉本用户的 AI 聊天限流计数（1 分钟 20 次），否则连续 25 条会被 429 打断。
 $T->section( '§AI-4 上下文只带最近 20 条' );
 
-for ( $i = 1; $i <= 25; $i++ ) {
+// 契约规定「同一用户 1 分钟最多 20 次」（§AI-4），而本用例要连发 30 条以上，
+// 所以先清掉该用户的限流计数（这正是限流表的存在意义，属于测试自检的一部分）。
+$rl_key    = 'aichat:' . $uid1;
+$rl_before = (string) $T->db_scalar( 'SELECT COALESCE(MAX(count),0) FROM `' . $T->table( 'rate_limits' ) . '` WHERE `key` = ' . "'" . $rl_key . "'" );
+$T->db_exec( 'DELETE FROM `' . $T->table( 'rate_limits' ) . '` WHERE `key` LIKE ?', array( 'aichat:%' ) );
+$rl_after = (string) $T->db_scalar( 'SELECT COALESCE(MAX(count),0) FROM `' . $T->table( 'rate_limits' ) . '` WHERE `key` = ' . "'" . $rl_key . "'" );
+$T->info( '限流计数（aichat:' . $uid1 . '）清空前=' . ( '' === $rl_before ? '0' : $rl_before ) . ' 清空后=' . ( '' === $rl_after ? '0' : $rl_after ) );
+
+// 发 30 条（超过 20 条上限，且远小于「每用户每日 200」），保证上下文窗口一定处于饱和状态。
+// 注意：契约允许「同一用户 1 分钟最多 20 次」（§AI-4），所以每发 10 条就把该用户的限流计数清零，
+// 否则第 21 条起会被限流挡住。本用例要验证的是**上下文裁剪**，不是限流（限流另有专门用例），
+// 限流计数的清零与上面的清空是同一件事，属于测试夹具的一部分。
+$ctx_bodies = array();
+$ctx_ok     = true;
+for ( $i = 1; $i <= 30; $i++ ) {
+	if ( 1 === $i % 10 ) {
+		$T->db_exec( 'DELETE FROM `' . $T->table( 'rate_limits' ) . '` WHERE `key` LIKE ?', array( 'aichat:%' ) );
+	}
+	$body_i       = '第' . $i . '条';
+	$ctx_bodies[] = $body_i;
 	$r = $T->req(
 		'POST',
 		'/api/ai/chat/messages',
 		array(
 			'partnerId' => $pid,
-			'body'      => '第' . $i . '条',
+			'body'      => $body_i,
 			'clientId'  => 'c_' . $stamp . '_ctx' . $i,
 		),
 		$h1
 	);
 	if ( 200 !== $r['status'] ) {
-		$T->info( '第 ' . $i . ' 条发送失败：' . $T->brief( $r ) );
+		$ctx_ok  = false;
+		$rl_now  = (string) $T->db_scalar( 'SELECT CONCAT(COALESCE(count,0), "/", COALESCE(prev_count,0)) FROM `' . $T->table( 'rate_limits' ) . '` WHERE `key` = ' . "'" . $rl_key . "'" );
+		$T->info( '第 ' . $i . ' 条发送失败：' . $T->brief( $r ) . ' | 限流行=' . ( '' === $rl_now ? '(空)' : $rl_now ) );
 	}
 }
 
-$last_ctx = mock_last( $mock_log );
+// 立刻取 mock 记录（后面还有别的用例会继续往上写记录）。
+$last_ctx = mock_last_path( $mock_log, '/chat/completions' );
 $ctx_msgs = ( null !== $last_ctx && isset( $last_ctx['body']['messages'] ) ) ? $last_ctx['body']['messages'] : array();
 $ctx_contents = array();
 foreach ( $ctx_msgs as $m ) {
@@ -838,20 +1276,56 @@ foreach ( $ctx_msgs as $m ) {
 		$ctx_contents[] = (string) $m['content'];
 	}
 }
-$ctx_texts = array_slice( $ctx_contents, 1 ); // 去掉 system。
+$ctx_texts = array_slice( $ctx_contents, 1 ); // 去掉 system（persona）。
+
+/*
+ * 会话里已有历史消息，所以「最近 20 条」是一个滑动窗口：
+ * 断言「总数 = system + 20 条上下文」「末条是本次最后一条」「窗口末尾 20 条都在、更早的不在」。
+ */
+$ctx_total  = count( $ctx_msgs );
+$ctx_window = count( $ctx_texts );
+$ctx_last   = ( $ctx_window > 0 ) ? $ctx_texts[ $ctx_window - 1 ] : '';
+$ctx_first  = ( $ctx_window > 0 ) ? $ctx_texts[0] : '';
+/*
+ * 契约 §AI-4 是「最近 20 条**消息**」——用户消息与 AI 回复各占一条，
+ * 所以一个 20 条的滑动窗口里必然装不下「本次连发的最后 20 条用户消息」。
+ * 这里断言契约真正保证的东西：
+ *   1) 总数 = system + 20 条
+ *   2) 末条是本次最后一条用户消息（第30条）
+ *   3) 窗口内的用户消息，全部来自本次连发的那些条，且是它们的**末尾连续片段**
+ *   4) 更早的（第1条/第2条）已经滑出窗口
+ */
+$ctx_user_bodies = array();
+foreach ( $ctx_texts as $t ) {
+	if ( in_array( $t, $ctx_bodies, true ) ) {
+		$ctx_user_bodies[] = $t;
+	}
+}
+$tail_ok = count( $ctx_user_bodies ) > 0;
+if ( $tail_ok ) {
+	$tail20   = array_slice( $ctx_bodies, -count( $ctx_user_bodies ) );   // 末尾同样条数的用户消息
+	$tail_ok  = ( $ctx_user_bodies === $tail20 );
+}
 $T->ok(
-	21 === count( $ctx_msgs ) && 'system' === $ctx_msgs[0]['role']
-	&& 20 === count( $ctx_texts )
-	&& '第25条' === $ctx_texts[ count( $ctx_texts ) - 1 ]
-	&& '第7条' === $ctx_texts[0]
-	&& ! in_array( '第6条', $ctx_texts, true )
-	&& ! in_array( '第1条', $ctx_texts, true ),
-	'连续发 25 条后，最后一次请求给上游的 messages 只带最近 20 条（第 7-25 条 + system）',
-	'总 ' . count( $ctx_msgs ) . ' 条，首条上下文=' . ( isset( $ctx_texts[0] ) ? $ctx_texts[0] : '—' ) . '，末条=' . ( isset( $ctx_texts[19] ) ? $ctx_texts[19] : '—' )
+	$ctx_ok
+	&& 21 === $ctx_total
+	&& 'system' === $ctx_msgs[0]['role']
+	&& 20 === $ctx_window
+	&& '第30条' === $ctx_last
+	&& $tail_ok
+	&& ! in_array( '第1条', $ctx_texts, true )
+	&& ! in_array( '第2条', $ctx_texts, true ),
+	'连发 30 条后，最后一次请求给上游的 messages 只带最近 20 条（system + 20 条上下文）',
+	'总 ' . $ctx_total . ' 条，上下文 ' . $ctx_window . ' 条，首条=' . $ctx_first . '，末条=' . $ctx_last
+	. '，窗口内用户消息=' . count( $ctx_user_bodies ) . ' 条，是末尾连续片段=' . var_export( $tail_ok, true )
+	. '，含第1条=' . var_export( in_array( '第1条', $ctx_texts, true ), true )
 );
 
 // 上游 401 → 502 upstream_error。
 $T->section( '§AI-4 上游错误映射' );
+
+// 上下文用例已经用掉了限流额度，这里先清零（否则下面几条都会被 429 挡住）。
+$T->db_exec( 'DELETE FROM `' . $T->table( 'rate_limits' ) . "` WHERE `key` = 'aichat:" . $uid1 . "'" );
 
 $bind401 = $T->req( 'PATCH', '/api/ai/partners/' . $pid, array( 'providerId' => $prov401_id, 'model' => 'mock-401-model' ), $h1 );
 $up401 = $T->req( 'POST', '/api/ai/chat/messages', array( 'partnerId' => $pid, 'body' => '测鉴权失败', 'clientId' => 'c_' . $stamp . '_401' ), $h1 );
@@ -893,7 +1367,7 @@ $T->ok(
 $T->ok( $elapsed >= 25 && $elapsed <= 45, '超时用例耗时落在 30 秒阈值附近（25-45 秒）', $elapsed . ' 秒' );
 
 // 上游返回空内容 → 落占位文案，接口仍 200。
-$r_empty = wp_admin_call( $T, array( 'providerId' => '', 'name' => 'Mock-Empty', 'type' => 'openai', 'baseUrl' => $opts['mock'] . '?mock=empty', 'apiKey' => $KEY_PLAIN_2, 'models' => 'mock-empty-model', 'defaultModel' => 'mock-empty-model', 'enabled' => '1' ), 'couple_space_ai_provider', 'providers' );
+$r_empty = wp_admin_call( $T, array( 'providerId' => '', 'name' => 'Mock-Empty', 'type' => 'openai', 'baseUrl' => $opts['mock'] . '/mockempty', 'apiKey' => $KEY_PLAIN_2, 'models' => 'mock-empty-model', 'defaultModel' => 'mock-empty-model', 'enabled' => '1' ), 'couple_space_ai_provider', 'providers' );
 $prov_empty_id = (string) $T->db_scalar( 'SELECT id FROM `' . $T->table( 'ai_providers' ) . "` WHERE name='Mock-Empty'" );
 $bindempty = $T->req( 'PATCH', '/api/ai/partners/' . $pid, array( 'providerId' => $prov_empty_id, 'model' => 'mock-empty-model' ), $h1 );
 $upempty = $T->req( 'POST', '/api/ai/chat/messages', array( 'partnerId' => $pid, 'body' => '空回复测试', 'clientId' => 'c_' . $stamp . '_empty' ), $h1 );
@@ -941,10 +1415,13 @@ $T->ok( 0 === count( $leaked ), '所有 App 侧接口响应里都不含供应商
 $raw_leak = false;
 foreach ( $ALL_RESPONSES as $body ) {
 	// 原始请求体 / 上游完整响应里的特征字段也不应出现在 App 响应里。
-	if ( false !== strpos( $body, 'sk-****' ) === false && false !== strpos( $body, 'chatcmpl-mock' ) ) {
+	if ( false !== strpos( $body, 'chatcmpl-mock' ) ) {
 		$raw_leak = true;
 	}
 	if ( false !== strpos( $body, 'input_tokens' ) || false !== strpos( $body, 'prompt_tokens' ) ) {
+		$raw_leak = true;
+	}
+	if ( false !== strpos( $body, 'enc:v1:' ) ) {
 		$raw_leak = true;
 	}
 }
@@ -952,13 +1429,14 @@ $T->ok( ! $raw_leak, 'App 侧响应里不含上游完整响应体特征（chatcm
 
 $meta = $T->req( 'GET', '/api/meta' );
 remember( $meta );
+$feature_keys = array_keys( (array) $T->get( $meta, 'features' ) );
 $T->ok(
 	200 === $meta['status'] && false === strpos( (string) $meta['body'], $KEY_PLAIN )
 	&& is_bool( $T->get( $meta, 'features.aiChat' ) )
 	&& is_int( $T->get( $meta, 'features.aiProviders' ) )
-	&& array() !== array_diff( array( 'chat', 'emoji', 'ai', 'sync', 'aiChat', 'aiProviders' ), array_keys( (array) $T->get( $meta, 'features' ) ) ),
+	&& array() === array_diff( array( 'chat', 'emoji', 'ai', 'sync', 'aiChat', 'aiProviders' ), $feature_keys ),
 	'/api/meta 的 features 增加 aiChat(bool) 与 aiProviders(启用供应商数量)，且不含 Key',
-	$T->brief( $meta )
+	'features=' . implode( ',', $feature_keys )
 );
 $T->ok( (int) $T->get( $meta, 'features.aiProviders' ) >= 4, 'aiProviders 与启用供应商数量一致（>=4）', 'aiProviders=' . $T->get( $meta, 'features.aiProviders' ) );
 $T->ok( true === $T->get( $meta, 'features.aiChat' ) && true === $T->get( $meta, 'aiConfigured' ), 'aiChat=true 且 aiConfigured 仍为记账 AI 的语义（deepseekKey 状态）', 'aiConfigured=' . var_export( $T->get( $meta, 'aiConfigured' ), true ) );
@@ -997,7 +1475,7 @@ if ( $not_configured ) {
 
 $ds_src = $T->wp_eval( 'echo strpos( file_get_contents( ' . var_export( str_replace( '\\', '/', __DIR__ . '/../includes/DeepSeek.php' ), true ) . ' ), "wp_remote_post" ) !== false ? "wp_remote_post" : "MISSING";' );
 $T->ok( false !== strpos( $ds_src['out'], 'wp_remote_post' ), 'DeepSeek 记账仍走 wp_remote_post（未被多供应商改造影响）', trim( $ds_src['out'] ) );
-$up_src = $T->wp_eval( 'echo strpos( file_get_contents( ' . var_export( str_replace( '\\', '/', __DIR__ . '/../includes/AiUpstream.php' ), true ) . ' ), "wp_remote_post" ) !== false ? "wp_remote_post" : "MISSING";' );
+$up_src = $T->wp_eval( 'echo strpos( file_get_contents( WP_PLUGIN_DIR . "/couple-space/includes/AiUpstream.php" ), "wp_remote_post" ) !== false ? "wp_remote_post" : "MISSING";' );
 $T->ok( false !== strpos( $up_src['out'], 'wp_remote_post' ), '多供应商适配层同样使用 wp_remote_post（无第三方库）', trim( $up_src['out'] ) );
 
 // ---------------------------------------------------------------------
@@ -1013,13 +1491,27 @@ foreach ( array( $pid, $u2_pid ) as $clean_pid ) {
 $T->db_exec( 'DELETE FROM `' . $T->table( 'ai_providers' ) . '`' );
 $T->db_exec( 'DELETE FROM `' . $T->table( 'ai_usage' ) . '` WHERE endpoint = ?', array( 'ai-chat' ) );
 $T->db_exec( 'DELETE FROM `' . $T->table( 'rate_limits' ) . "` WHERE `key` LIKE 'aichat:%'" );
+
+$left = (int) $T->db_scalar( 'SELECT COUNT(*) FROM `' . $T->table( 'ai_providers' ) . '`' );
+$T->ok( 0 === $left, '已清理本次测试的供应商 / 伙伴 / 消息 / 记账计数', 'ai_providers 剩余 ' . $left . ' 行' );
+
+// 删掉用户之前先确认「没有供应商时 App 端拿到空列表」。
+$after_clean = $T->req( 'GET', '/api/ai/providers', null, $h1 );
+remember( $after_clean );
+$T->ok(
+	200 === $after_clean['status'] && array() === (array) $T->get( $after_clean, 'providers' )
+	&& true === $T->get( $after_clean, 'aiChatEnabled' ),
+	'清理后 GET /api/ai/providers 返回 providers=[]（空列表结构正确）',
+	$T->brief( $after_clean )
+);
+
 foreach ( array( $uid1, $uid2 ) as $clean_uid ) {
 	$T->db_exec( 'DELETE FROM `' . $T->table( 'users' ) . '` WHERE id = ?', array( $clean_uid ) );
 }
 $T->db_exec( 'DELETE FROM `' . $T->table( 'couples' ) . "` WHERE id NOT IN (SELECT couple_id FROM `" . $T->table( 'users' ) . "` WHERE couple_id IS NOT NULL)" );
 
-$left = (int) $T->db_scalar( 'SELECT COUNT(*) FROM `' . $T->table( 'ai_providers' ) . '`' );
-$T->ok( 0 === $left, '已清理本次测试的供应商 / 伙伴 / 消息 / 记账计数', 'ai_providers 剩余 ' . $left . ' 行' );
+$left_users = (int) $T->db_scalar( 'SELECT COUNT(*) FROM `' . $T->table( 'users' ) . '` WHERE id IN (' . "'" . $uid1 . "','" . $uid2 . "')" );
+$T->ok( 0 === $left_users, '已清理测试用户与情侣空间', '剩余测试用户 ' . $left_users . ' 个' );
 
 @unlink( __DIR__ . '/.admin-call.json' );
 

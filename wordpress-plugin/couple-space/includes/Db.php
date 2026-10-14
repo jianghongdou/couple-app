@@ -1812,7 +1812,18 @@ class Db {
 			'isMine'    => ( ! $is_ai && '' !== (string) $viewer && $owner === (string) $viewer ),
 			'body'      => isset( $row['body'] ) ? (string) $row['body'] : '',
 			'createdAt' => (int) $row['created_at'],
-			'clientId'  => ( isset( $row['client_id'] ) && null !== $row['client_id'] ) ? (string) $row['client_id'] : '',
+			/*
+			 * clientId 只对**用户消息**有意义：它是客户端幂等键，只有用户自己能提供。
+			 * AI 回复在库里也会占一个「内部关联键」槽位（避免撞 UNIQUE(owner_id, client_id)），
+			 * 但那个内部键绝不回吐给 App，一律回空字符串（§AI-4 结构要求）。
+			 */
+			'clientId'  => ( ! $is_ai
+				&& isset( $row['client_id'] )
+				&& null !== $row['client_id']
+				&& '' !== (string) $row['client_id']
+				// 客户端没传 clientId 时，库里存的是内部占位键 `ai:<消息id>`，绝不能回吐给 App
+				&& 0 !== strpos( (string) $row['client_id'], 'ai:' ) )
+				? (string) $row['client_id'] : '',
 		);
 	}
 
@@ -1983,13 +1994,34 @@ class Db {
 	/**
 	 * 写入一条 AI 会话消息。
 	 *
+	 * client_id 上的 `UNIQUE(owner_id, client_id)` 只用于**用户消息**的 clientId 幂等；
+	 * 但 MySQL 唯一索引把多个 `''` 视作同一个值（多个 NULL 才互不相同），所以**绝不能让
+	 * 两条消息共存同一个 client_id 值**：调用方没给 clientId 时（典型是 AI 回复），
+	 * 这里落一个互不相同的内部关联键，避免第二条回复撞唯一键而写不进去。
+	 * 该内部键不会下发给 App（`map_ai_message` 对非用户消息一律回 `clientId: ""`）。
+	 *
 	 * @param array<string,mixed> $data partnerId / ownerId / sender(user|ai) / body / clientId。
 	 * @return array<string,mixed>|null
 	 */
 	public static function insert_ai_message( array $data ) {
-		$table = self::table( 'ai_messages' );
-		$id    = Ids::new_message_id();
-		$client = ( isset( $data['clientId'] ) && '' !== (string) $data['clientId'] ) ? (string) $data['clientId'] : null;
+		$table  = self::table( 'ai_messages' );
+		$id     = Ids::new_message_id();
+		$client = isset( $data['clientId'] ) ? trim( (string) $data['clientId'] ) : '';
+		if ( '' === $client ) {
+			$client = 'ai:' . $id;
+		}
+		// created_at 必须**严格递增**：同一毫秒内连发多条时，若时间戳相同，
+		// 「最近 N 条」用的 ORDER BY created_at DESC, id DESC 会因为 id 是随机串而排序不稳定，
+		// 取到的窗口就会是错的（表现为上下文里混进了很旧的消息、漏了最新的几条）。
+		$now  = Time::now_ms();
+		$last = self::one(
+			'SELECT created_at FROM `' . $table . '` WHERE owner_id = %s AND partner_id = %s ORDER BY created_at DESC LIMIT 1',
+			array( $data['ownerId'], $data['partnerId'] )
+		);
+		if ( $last && (int) $last['created_at'] >= $now ) {
+			$now = (int) $last['created_at'] + 1;
+		}
+
 		self::run(
 			'INSERT INTO `' . $table . '` (id, partner_id, owner_id, sender, body, client_id, created_at)
 			 VALUES (%s, %s, %s, %s, %s, %s, %d)',
@@ -2000,11 +2032,46 @@ class Db {
 				$data['sender'],
 				isset( $data['body'] ) ? $data['body'] : '',
 				$client,
-				Time::now_ms(),
+				$now,
 			)
 		);
 		$row = self::one( 'SELECT * FROM `' . $table . '` WHERE id = %s', array( $id ) );
 		return self::map_ai_message( $row, $data['ownerId'] );
+	}
+
+	/**
+	 * 该 clientId 的用户消息是否已存在（并发重放预检）。
+	 *
+	 * 让「clientId 幂等」在并发下尽量不触发唯一键冲突，避免 MySQL 往站点错误日志里
+	 * 写一条「Duplicate entry」（那是预期内的控制流，不是故障）。
+	 *
+	 * @param string $owner_id  用户 id。
+	 * @param string $client_id 客户端幂等 id（空字符串时返回 false）。
+	 * @return bool
+	 */
+	public static function ai_message_client_id_exists( $owner_id, $client_id ) {
+		$client_id = (string) $client_id;
+		// 空 clientId 与 AI 回复的内部关联键（ai:*）都不是「用户消息的幂等键」。
+		if ( '' === $client_id || self::is_ai_reply_row_key( $client_id ) ) {
+			return false;
+		}
+		return self::count(
+			'SELECT COUNT(*) AS n FROM `' . self::table( 'ai_messages' ) . '` WHERE owner_id = %s AND client_id = %s',
+			array( $owner_id, $client_id )
+		) > 0;
+	}
+
+	/**
+	 * 是否是 AI 回复占位用的内部关联键（`ai:<消息 id>`）。
+	 *
+	 * 这类键只为了避开 `UNIQUE(owner_id, client_id)`（MySQL 把多个 '' 视作同一个值，
+	 * 多个 NULL 才互不相同），绝不参与 clientId 幂等查找，也绝不下发给 App。
+	 *
+	 * @param string $client_id 库里的 client_id 值。
+	 * @return bool
+	 */
+	public static function is_ai_reply_row_key( $client_id ) {
+		return 0 === strpos( (string) $client_id, 'ai:' );
 	}
 
 	/**
@@ -2025,6 +2092,11 @@ class Db {
 	 * @return array<string,mixed>|null
 	 */
 	public static function find_ai_message_by_client_id( $owner_id, $client_id ) {
+		$client_id = (string) $client_id;
+		// 空 clientId 与 AI 回复的内部关联键（ai:*）都不是「用户消息的幂等键」。
+		if ( '' === $client_id || self::is_ai_reply_row_key( $client_id ) ) {
+			return null;
+		}
 		$row = self::one(
 			'SELECT * FROM `' . self::table( 'ai_messages' ) . '` WHERE owner_id = %s AND client_id = %s',
 			array( $owner_id, $client_id )
@@ -2318,7 +2390,7 @@ class Db {
 	 */
 	public static function delete_ai_provider( $id ) {
 		global $wpdb;
-		self::run( 'DELETE FROM `' . self::table( 'ai_providers' ) . '` WHERE id = %s', array( $id ) );
+		$n = self::run( 'DELETE FROM `' . self::table( 'ai_providers' ) . '` WHERE id = %s', array( $id ) );
 		return ( (int) $wpdb->rows_affected ) > 0;
 	}
 

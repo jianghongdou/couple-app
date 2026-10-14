@@ -1,0 +1,292 @@
+情侣空间 WordPress 插件 · 端到端测试报告
+生成时间：2026-10-14 21:43:19
+站点地址：http://127.0.0.1:8890
+PHP：8.3.35
+耗时：105.23 秒
+
+═══════════════════════════════════════════════════════════════
+   · mock 供应商：http://127.0.0.1:8899（已在监听，直接复用）
+
+── 环境与准备 ───────────────────────────────────────────────────────
+   · 站点地址：http://127.0.0.1:8890
+   · mock 供应商：http://127.0.0.1:8899
+   · WordPress：C:\Users\Tage-HongDou\AppData\Local\wp-test\wordpress
+   · 用户名后缀：mwgpa12046
+✅ 站点与插件可用（/api/health 返回 200）
+      HTTP 200
+✅ 本地 mock 供应商服务可用（整个测试不出网打第三方 API）
+      HTTP 200 {"ok":true,"count":58,"logFile":"C:\/Users\/TAGE-H~1\/AppData\/Local\/Temp\/coup
+
+── §AI-6 数据表与激活幂等 ──────────────────────────────────────────────
+✅ 三张新表已建立（ai_partners / ai_messages / ai_providers）
+      齐全
+✅ 索引齐全：ai_partners(owner_id)、ai_messages(partner_id,created_at)、ai_messages(owner_id,client_id) UNIQUE
+      owner=1 partner_time=2 client=2
+✅ 连续激活两次不报错（三张新表建表幂等）
+      NULL
+      OK1 / NULL
+      OK2
+✅ Db::install() 报告建表数量 = 13（原有 10 + 新增 3）
+      {"tables":13,"addedColumns":0,"addedIndexes":0}
+
+── 未登录与账号准备 ────────────────────────────────────────────────────
+✅ 未登录 GET /api/ai/partners → 401 unauthorized
+      HTTP 401 {"error":"unauthorized","message":"缺少登录凭证","serverTime":1791985296731}
+✅ 未登录 POST /api/ai/partners → 401 unauthorized
+      HTTP 401 {"error":"unauthorized","message":"缺少登录凭证","serverTime":1791985297068}
+✅ 未登录 POST /api/ai/chat/messages → 401 unauthorized
+      HTTP 401 {"error":"unauthorized","message":"缺少登录凭证","serverTime":1791985297415}
+✅ 未登录 GET /api/ai/chat/messages → 401 unauthorized
+      HTTP 401 {"error":"unauthorized","message":"缺少登录凭证","serverTime":1791985297747}
+✅ 注册用户 u1（已绑定情侣）
+      uid=u_mv85s1euue9lcww
+✅ 注册用户 u2（未绑定情侣，coupleId=null）
+      uid=u_mv85s1qt04pfm1l
+✅ u1 创建情侣空间并让 u3 加入（u3 作为「不是本人」的对照）
+      invite=LWU8PK
+
+── §AI-1 列出 AI 伙伴 ──────────────────────────────────────────────
+✅ 无伙伴时返回空数组 partners=[]（不报错）
+      HTTP 200 {"ok":true,"partners":[],"serverTime":1791985299773}
+✅ 未绑定情侣的用户也能列出伙伴（空列表）
+      HTTP 200 {"ok":true,"partners":[],"serverTime":1791985300128}
+
+── §AI-1b 列出可用供应商 ──────────────────────────────────────────────
+✅ 未登录 GET /api/ai/providers → 401 unauthorized
+      HTTP 401 {"error":"unauthorized","message":"缺少登录凭证","serverTime":1791985300471}
+✅ 没有任何供应商时 providers=[]（不报错），aiChatEnabled 仍为 true
+      HTTP 200 {"ok":true,"aiChatEnabled":true,"providers":[],"serverTime":1791985300868}
+✅ 未绑定情侣的用户也能访问（登录即可）
+      HTTP 200 {"ok":true,"aiChatEnabled":true,"providers":[],"serverTime":1791985301220}
+
+── §AI-2 新增 / 修改 / 删除 AI 伙伴 ────────────────────────────────────
+✅ providerId 不在可用列表 → 400 invalid_input
+      HTTP 400 {"error":"invalid_input","message":"providerId 不在可用列表中","serverTime":1791985301604}
+✅ name 全是空白（去空白后为空）→ 400 invalid_input
+      HTTP 400 {"error":"invalid_input","message":"name 长度不能少于 1 个字符","serverTime":1791985301963}
+✅ POST 缺少 name → 400 invalid_input
+      HTTP 400 {"error":"invalid_input","message":"name 必须是字符串","serverTime":1791985302348}
+✅ name 超过 20 字 → 400 invalid_input
+      HTTP 400 {"error":"invalid_input","message":"name 长度不能超过 20 个字符","serverTime":1791985302768}
+✅ persona 超过 2000 字 → 400 invalid_input
+      HTTP 400 {"error":"invalid_input","message":"persona 长度不能超过 2000 个字符","serverTime":1791985303149}
+✅ temperature 超出 0-2 → 400 invalid_input
+      HTTP 400 {"error":"invalid_input","message":"temperature 必须在 0 到 2 之间","serverTime":1791985303497}
+✅ 新增 AI 伙伴成功，返回 AI-1 结构（providerId/model 可为空 -> 用服务端默认）
+      HTTP 200 {"ok":true,"partner":{"id":"aip_mv85s5r6v7pu171","name":"小助手","avatarEmoji":"🤖","persona":"你是温柔体贴的男友，说话简短、会撒娇。","providerId":"","prov…
+✅ 列表返回含项结构（providerId/providerName/model/temperature 等字段齐全）
+      HTTP 200 {"ok":true,"partners":[{"id":"aip_mv85s5r6v7pu171","name":"小助手","avatarEmoji":"🤖","persona":"你是温柔体贴的男友，说话简短、会撒娇。","providerId":"","pr…
+✅ PATCH 只改传入字段（name/temperature/persona 已改，avatarEmoji 保持不变）
+      HTTP 200 {"ok":true,"partner":{"id":"aip_mv85s5r6v7pu171","name":"小小助手","avatarEmoji":"🤖","persona":"换了个性格","providerId":"","providerName":"","model":"","temperature":1…
+✅ PATCH name 为空 → 400 invalid_input
+      HTTP 400 {"error":"invalid_input","message":"name 长度不能少于 1 个字符","serverTime":1791985304913}
+✅ PATCH 不存在的伙伴 → 404 not_found
+      HTTP 404 {"error":"not_found","message":"AI 伙伴不存在","serverTime":1791985305246}
+✅ PATCH 别人的伙伴 → 404 not_found（不是 403，不暴露存在性）
+      HTTP 404 {"error":"not_found","message":"AI 伙伴不存在","serverTime":1791985305574}
+✅ DELETE 别人的伙伴 → 404 not_found
+      HTTP 404 {"error":"not_found","message":"AI 伙伴不存在","serverTime":1791985305932}
+✅ DELETE 不存在的伙伴 → 404 not_found
+      HTTP 404 {"error":"not_found","message":"AI 伙伴不存在","serverTime":1791985306280}
+✅ 每个用户最多 10 个 AI 伙伴，第 11 个 → 409 conflict
+      HTTP 409 {"error":"conflict","message":"每个用户最多只能创建 10 个 AI 伙伴","serverTime":1791985310232}
+✅ DELETE 生效（u2 的伙伴已清空）
+      HTTP 200 {"ok":true,"partners":[],"serverTime":1791985314480}
+
+── §AI-5 后台：未配置供应商时的行为 ─────────────────────────────────────────
+✅ 服务端没有配置任何可用供应商 → 403 ai_not_configured
+      HTTP 403 {"error":"ai_not_configured","message":"AI 未配置，请到服务端后台添加供应商","serverTime":1791985314894}
+
+── §AI-5 后台：供应商增删改 / 掩码 / 测试 / 默认切换 ────────────────────────────
+✅ 后台接口未授权一律 401 unauthorized
+      /admin/api/settings=401 /admin/api/stats=401 /admin/api/users=401 /admin/api/ai/test=401
+✅ App 后台登录成功（用于读取掩码等后台视图）
+      HTTP 200 {"token":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0eXAiOiJhZG1pbiIsInJvbGUiOiJhZG1pbiIsImlhdCI6MTc5MTk4NTMxNiwiZXhwIjoxNzkyMDI4NTE2fQ._cOyQmifTc2zyzX076T4pMlGLE4n1zs9uKxCW0H5Y_M","…
+✅ wp-admin 表单辅助函数可用（wp_nonce_field 等）
+      NONCE_FIELD_OK
+✅ 未授权用户访问 AI 供应商页面被拦截（wp_die 403）
+      code=403 title=权限不足 msg=你没有权限访问该页面。
+✅ 未授权提交供应商表单被拦截（wp_die 403，未落库）
+      code=403 title=权限不足 msg=你没有权限执行该操作。；供应商数量 0 -> 0
+✅ 后台新增供应商（WP 原生表单 + nonce）成功并跳回列表页
+      http://127.0.0.1:8890/wp-admin/admin.php?page=couple-space-ai-providers&couple_notice=供应商「Mock-OpenAI」已添加。&couple_notice_t=success | run=NO_EXIT:22
+✅ 供应商已落库（ai_providers 1 行）
+      rows=1
+✅ 拿到供应商 id
+      prov_mv85shc377yk805
+✅ API Key 以 AES-256-GCM 密文入库（enc:v1: 前缀，不含明文）
+      enc:v1:7sKjMOu0orkMzHab:...
+✅ 第一个供应商自动成为默认
+      isDefault=1
+✅ 模型列表解析正确（换行分隔）
+      ["mock-model-a","mock-model-b"]
+✅ 供应商视图只返回掩码（apiKeyConfigured=true、apiKeyMasked=sk-*...），不含明文
+      {"masked":"sk-************abcd","configured":true,"models":["mock-model-a","mock-model-b"],"type":"openai"}
+✅ 后台设置接口响应里不含供应商 Key 明文
+      已检查响应体 561 字节
+✅ 后台「测试」按钮：用该供应商发出「你好」并显示回复与耗时
+      http://127.0.0.1:8890/wp-admin/admin.php?page=couple-space-ai-providers&couple_notice=测试成功（Mock-OpenAI / mock-model-a，耗时 26ms）：在的呀～我是 mock 供应商&couple_notice_t=success | run=NO_EXIT:22
+✅ 测试结果包含耗时（latencyMs）
+      含 ms
+✅ 新增第二个供应商（指向 mock 的 401 端点）
+      prov_mv85sivtvwtbmhg
+✅ 新增第三个供应商（指向 mock 的 sleep 35 秒端点）
+      prov_mv85sjbz966wl4b
+✅ 新增 anthropic 与 gemini 类型的供应商
+      anthropic=prov_mv85sjqqnds5bbg gemini=prov_mv85sk5gp626tnd
+✅ 第二个供应商名称/Key 独立存储
+      已加密
+✅ 后台编辑供应商：改名/改类型/改模型列表生效，Key 留空则不修改（密文不变）
+      type=deepseek models=["mock-model-a","mock-model-c"]
+✅ 后台「设为默认」切换默认供应商
+      anthropic 供应商 is_default=1
+✅ 原默认供应商的 is_default 被清掉（同时只可能有一个默认）
+      is_default=0
+✅ 删除默认供应商后自动改选另一个为默认
+      已删除供应商残留=0，新默认=prov_mv85shc377yk805
+✅ 后台 AI 聊天页可设置总开关/每日上限/默认供应商/默认模型
+      [true,200,"prov_mv85shc377yk805","mock-model-a"]
+✅ AI 供应商页渲染成功（列表含名称/类型/模型数/默认/掩码，且不含 Key 明文）
+      页面 13315 字节 / run=NO_EXIT:13315
+✅ AI 聊天页渲染成功（总开关/每日上限/默认供应商/默认模型字段齐全）
+      页面 4415 字节 / run=NO_EXIT:4415
+✅ 「情侣空间」菜单里注册了「AI 供应商」与「AI 聊天」两个子菜单及其表单钩子
+      HAS_PROVIDERS / HAS_CHAT / HAS_HOOK
+
+── §AI-1b 有供应商时的返回结构 ───────────────────────────────────────────
+✅ 只返回启用的供应商，字段严格为 id/name/models/defaultModel/isDefault（无 apiKey/baseUrl 等多余字段）
+      共 4 个；默认=prov_mv85shc377yk805
+✅ 返回的 models / defaultModel 与后台配置一致（逗号分隔的模型列表也被正确解析）
+      models=mock-model-a,mock-model-c default=mock-model-c
+✅ GET /api/ai/providers 响应里不出现 Key（明文 / 掩码 / 密文）与 baseUrl（含 mock 主机名）
+      已检查响应体 594 字节
+✅ 所有供应商停用后 → providers=[] 且仍然 200（不报错）
+      HTTP 200 {"ok":true,"aiChatEnabled":true,"providers":[],"serverTime":1791985328572}
+✅ AI 聊天总开关关闭后：aiChatEnabled=false 且发消息 403 forbidden（AI 聊天已关闭）
+      HTTP 200 {"ok":true,"aiChatEnabled":false,"providers":[{"id":"prov_mv85shc377yk805","name":"Mock-OpenAI-改","models":["mock-model-a","mock-model-c"],"defaultModel":"mock-model-c","isDefaul…
+✅ 重新打开开关后 aiChatEnabled=true
+      HTTP 200 {"ok":true,"aiChatEnabled":true,"providers":[{"id":"prov_mv85shc377yk805","name":"Mock-OpenAI-改","models":["mock-model-a","mock-model-c"],"defaultModel":"mock-model-c","isDefault…
+
+── §AI-4 发消息（基础流程 / 落库 / 幂等） ───────────────────────────────────
+✅ 把伙伴绑定到指定供应商与模型
+      HTTP 200 {"ok":true,"partner":{"id":"aip_mv85s5r6v7pu171","name":"小小助手","avatarEmoji":"🤖","persona":"换了个性格","providerId":"prov_mv85shc377yk805","providerName":"Mock-Ope…
+✅ model 不在该供应商模型列表 → 400 invalid_input
+      HTTP 400 {"error":"invalid_input","message":"model 不在该供应商支持的模型列表中","serverTime":1791985331406}
+✅ POST 返回 ok=true + message（senderId/isMine/body/clientId/createdAt 正确）
+      HTTP 200 {"ok":true,"message":{"id":"m_mv85sray2t2bqnk","senderId":"u_mv85s1euue9lcww","isMine":true,"body":"在吗","createdAt":1791985331770,"clientId":"c_mwgpa12046_1"},"reply":{"id":"m_…
+✅ POST 返回 reply（senderId 固定 "ai"、isMine=false、clientId 为空）
+      HTTP 200 {"ok":true,"message":{"id":"m_mv85sray2t2bqnk","senderId":"u_mv85s1euue9lcww","isMine":true,"body":"在吗","createdAt":1791985331770,"clientId":"c_mwgpa12046_1"},"reply":{"id":"m_…
+✅ POST 返回 usage（provider/model/promptTokens/completionTokens 来自上游）
+      HTTP 200 {"ok":true,"message":{"id":"m_mv85sray2t2bqnk","senderId":"u_mv85s1euue9lcww","isMine":true,"body":"在吗","createdAt":1791985331770,"clientId":"c_mwgpa12046_1"},"reply":{"id":"m_…
+✅ 上游请求打到 {baseUrl}/chat/completions 且带鉴权头（Bearer）
+      POST /v1/chat/completions authLen=42
+✅ 上游 messages 第一条是 persona（system prompt），最后一条是本次用户消息
+      共 2 条；[0]=system/换了个性格；[last]=user/在吗
+✅ 用户消息与 AI 回复都已落库（sender=user / sender=ai）
+      user=1 ai=1
+✅ clientId 幂等：同 clientId 重复提交不产生新消息，返回上次结果
+      message=m_mv85sray2t2bqnk reply=m_mv85src02t3t6ii rows=1/1
+✅ 不传 clientId 也能发消息（clientId 为空字符串，不触发幂等）
+      HTTP 200 {"ok":true,"message":{"id":"m_mv85srvarxsi330","senderId":"u_mv85s1euue9lcww","isMine":true,"body":"你好呀","createdAt":1791985332502,"clientId":""},"reply":{"id":"m_mv85srwdrxt…
+✅ 未绑定情侣的用户也能创建 AI 伙伴
+      aip_mv85ss5ya9khot8
+✅ 未绑定情侣的用户也能与 AI 伙伴聊天（不要求 coupleId）
+      HTTP 200 {"ok":true,"message":{"id":"m_mv85ssfrfi0qi0s","senderId":"u_mv85s1qt04pfm1l","isMine":true,"body":"没人陪我聊","createdAt":1791985333239,"clientId":"c_mwgpa12046_u2"},"reply"…
+
+── §AI-3 与 AI 伙伴聊天（读） ──────────────────────────────────────────
+✅ GET 返回 ok=true + partner{id,name,avatarEmoji} + messages（按 createdAt 升序，字段齐全）+ hasMore
+      条数=4 升序=true hasMore=false 首条字段=id,senderId,isMine,body,createdAt,clientId clientId='c_mwgpa12046_1'
+✅ isMine / senderId 映射正确（用户消息 isMine=true，AI 回复 isMine=false）
+      u_mv85s1euue9lcww / ai
+✅ limit=2 只返回 2 条且 hasMore=true
+      HTTP 200 {"ok":true,"partner":{"id":"aip_mv85s5r6v7pu171","name":"小小助手","avatarEmoji":"🤖"},"messages":[{"id":"m_mv85srvarxsi330","senderId":"u_mv85s1euue9lcww","isMine":true,"bod…
+✅ limit 超出按 100 处理（不报错）
+      返回 4 条
+✅ before 分页只返回更早的消息
+      返回 3 条
+✅ partnerId 不是自己的 → 404 not_found
+      HTTP 404 {"error":"not_found","message":"AI 伙伴不存在","serverTime":1791985335337}
+✅ 缺少 partnerId → 400 invalid_input
+      HTTP 400 {"error":"invalid_input","message":"partnerId 必须是字符串","serverTime":1791985335701}
+
+── §AI-4 参数校验与错误映射 ─────────────────────────────────────────────
+✅ partnerId 不存在 → 404 not_found
+      HTTP 404 {"error":"not_found","message":"AI 伙伴不存在","serverTime":1791985336042}
+✅ 用别人的伙伴发消息 → 404 not_found
+      HTTP 404 {"error":"not_found","message":"AI 伙伴不存在","serverTime":1791985336387}
+✅ body 为空 → 400 invalid_input
+      HTTP 400 {"error":"invalid_input","message":"body 长度不能少于 1 个字符","serverTime":1791985336740}
+✅ body 全是空白 → 400 invalid_input
+      HTTP 400 {"error":"invalid_input","message":"body 长度不能少于 1 个字符","serverTime":1791985337081}
+✅ body 超过 2000 字 → 400 invalid_input
+      HTTP 400 {"error":"invalid_input","message":"body 长度不能超过 2000 个字符","serverTime":1791985337437}
+✅ body 恰好 2000 字 → 允许
+      HTTP 200 {"ok":true,"message":{"id":"m_mv85svydl5eqa2d","senderId":"u_mv85s1euue9lcww","isMine":true,"body":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb…
+✅ 伙伴 enabled=false → 403 forbidden（该伙伴已停用）
+      HTTP 403 {"error":"forbidden","message":"该伙伴已停用","serverTime":1791985338555}
+
+── §AI-4 上下文只带最近 20 条 ──────────────────────────────────────────
+   · 限流计数（aichat:u_mv85s1euue9lcww）清空前=3 清空后=0
+✅ 连发 30 条后，最后一次请求给上游的 messages 只带最近 20 条（system + 20 条上下文）
+      总 21 条，上下文 20 条，首条=在的呀～我是 mock 供应商，末条=第30条，窗口内用户消息=10 条，是末尾连续片段=true，含第1条=false
+
+── §AI-4 上游错误映射 ────────────────────────────────────────────────
+✅ 上游返回 401 → 502 upstream_error（message：AI 供应商鉴权失败，请检查 Key）
+      HTTP 502 {"error":"upstream_error","message":"AI 供应商鉴权失败，请检查 Key","serverTime":1791985351128}
+✅ 上游鉴权失败的响应里不含任何 Key 明文
+      已检查响应体
+✅ 所有供应商都被停用（启用数 0）→ 403 ai_not_configured
+      HTTP 403 {"error":"ai_not_configured","message":"AI 未配置，请到服务端后台添加供应商","serverTime":1791985351461}
+   · 开始超时用例：mock 会 sleep 35 秒，服务端应在 30 秒超时
+✅ 上游 sleep 35 秒 → 504 upstream_timeout（服务端 30 秒超时阈值）
+      耗时 30.4 秒 / HTTP 504 {"error":"upstream_timeout","message":"AI 供应商响应超时，请重试","serverTime":1791985382227}
+✅ 超时用例耗时落在 30 秒阈值附近（25-45 秒）
+      30.4 秒
+✅ 上游返回空内容 → 落库「（AI 没有返回内容）」且接口仍返回 200
+      HTTP 200 {"ok":true,"message":{"id":"m_mv85tv766xnxamy","senderId":"u_mv85s1euue9lcww","isMine":true,"body":"空回复测试","createdAt":1791985383474,"clientId":"c_mwgpa12046_empty"},"rep…
+
+── §AI-4 限流（1 分钟 20 次） ─────────────────────────────────────────
+✅ 同一用户 1 分钟内第 21 次调用 → 429 rate_limited（前 20 次正常）
+      前 20 次状态：200；第 21 次=429
+
+── 安全：Key 绝不下发 ─────────────────────────────────────────────────
+✅ 所有 App 侧接口响应里都不含供应商 Key 明文（共检查 27 个响应）
+      未发现泄漏
+✅ App 侧响应里不含上游完整响应体特征（chatcmpl-* / prompt_tokens / input_tokens）
+      干净
+✅ /api/meta 的 features 增加 aiChat(bool) 与 aiProviders(启用供应商数量)，且不含 Key
+      features=chat,emoji,ai,aiChat,aiProviders,sync
+✅ aiProviders 与启用供应商数量一致（>=4）
+      aiProviders=5
+✅ aiChat=true 且 aiConfigured 仍为记账 AI 的语义（deepseekKey 状态）
+      aiConfigured=true
+
+── 既有 AI 记账接口（行为不变） ────────────────────────────────────────────
+✅ GET /api/ai/status 字段不变
+      HTTP 200 {"enabled":true,"configured":true,"model":"deepseek-chat","dailyLimit":200,"usedToday":63,"serverTime":1791985396287}
+✅ parse-ledger text 为空 → 400 invalid_input（不变）
+      HTTP 400 {"error":"invalid_input","message":"text 长度不能少于 1 个字符","serverTime":1791985396618}
+✅ parse-ledger text 超 2000 → 400 invalid_input（不变）
+      HTTP 400 {"error":"invalid_input","message":"text 长度不能超过 2000 个字符","serverTime":1791985396938}
+✅ monthly-report month 格式错 → 400 invalid_input（不变）
+      HTTP 400 {"error":"invalid_input","message":"month 格式必须是 YYYY-MM","serverTime":1791985397300}
+✅ 已配置 DeepSeek Key 时返回受控结果（行为不变）
+      HTTP 403 {"error":"forbidden","message":"DeepSeek API Key 无效或无权限","serverTime":1791985398034}
+✅ DeepSeek 记账仍走 wp_remote_post（未被多供应商改造影响）
+      wp_remote_post
+✅ 多供应商适配层同样使用 wp_remote_post（无第三方库）
+      wp_remote_post
+
+── 清理测试数据 ──────────────────────────────────────────────────────
+✅ 已清理本次测试的供应商 / 伙伴 / 消息 / 记账计数
+      ai_providers 剩余 0 行
+✅ 清理后 GET /api/ai/providers 返回 providers=[]（空列表结构正确）
+      HTTP 200 {"ok":true,"aiChatEnabled":true,"providers":[],"serverTime":1791985399382}
+✅ 已清理测试用户与情侣空间
+      剩余测试用户 0 个
+═══════════════════════════════════════════════════════════════
+
+通过：117 项
+失败：0 项
+合计：117 项
+结果：✅ 全部通过

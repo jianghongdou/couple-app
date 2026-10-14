@@ -161,9 +161,18 @@ class E2E_Harness {
 	 * @return array{out:string,code:int}
 	 */
 	public function wp_eval( $code ) {
-		$file = __DIR__ . '/.wp-eval-' . getmypid() . '.php';
+		$dir = __DIR__;
+		if ( ! is_dir( $dir ) ) {
+			@mkdir( $dir, 0777, true );
+		}
+		$file = $dir . '/.wp-eval-' . getmypid() . '.php';
 		$body = "<?php\nrequire '" . str_replace( "'", "\\'", $this->wp_dir ) . "/wp-load.php';\n" . $code . "\n";
-		file_put_contents( $file, $body );
+		if ( false === @file_put_contents( $file, $body ) ) {
+			return array(
+				'out'  => 'wp_eval 无法写入临时文件：' . $file,
+				'code' => 1,
+			);
+		}
 		$cmd = escapeshellarg( $this->php_bin ) . ' ' . escapeshellarg( $file ) . ' 2>&1';
 		$out = array();
 		$rc  = 0;

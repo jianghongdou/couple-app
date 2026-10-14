@@ -211,23 +211,24 @@ class AiAdmin {
 		check_admin_referer( 'couple_space_ai_provider' );
 
 		$id = isset( $_POST['providerId'] ) ? sanitize_text_field( wp_unslash( $_POST['providerId'] ) ) : '';
-		if ( '' !== $id ) {
-			$prov = Db::get_ai_provider( $id );
-			if ( ! $prov ) {
-				Admin::redirect_public( 'ai-providers', '供应商不存在。', 'error' );
-			}
-			if ( ! empty( $prov['isDefault'] ) ) {
-				// 取消默认：自动改选另一个（没有则没有默认）。
-				Db::set_default_ai_provider( '' );
-				$next = Db::reselect_default_ai_provider();
-				Auth::log_admin_action( 'wp.ai.provider.default', '取消默认 ' . $prov['name'] . '，改选 ' . $next );
-				Admin::redirect_public( 'ai-providers', '已取消默认供应商，当前默认：' . ( '' !== $next ? $next : '无' ) . '。' );
-			}
-			Db::set_default_ai_provider( $id );
-			Auth::log_admin_action( 'wp.ai.provider.default', '设为默认：' . $prov['name'] );
-			Admin::redirect_public( 'ai-providers', '已把「' . $prov['name'] . '」设为默认供应商。' );
+		if ( '' === $id ) {
+			Admin::redirect_public( 'ai-providers', '缺少供应商 id。', 'error' );
 		}
-		Admin::redirect_public( 'ai-providers', '缺少供应商 id。', 'error' );
+		$prov = Db::get_ai_provider( $id );
+		if ( ! $prov ) {
+			Admin::redirect_public( 'ai-providers', '供应商不存在。', 'error' );
+		}
+		if ( ! empty( $prov['isDefault'] ) ) {
+			// 取消默认：自动改选另一个（没有则没有默认）。
+			Db::set_default_ai_provider( '' );
+			$next = Db::reselect_default_ai_provider();
+			Auth::log_admin_action( 'wp.ai.provider.default', '取消默认 ' . $prov['name'] . '，改选 ' . $next );
+			$new_name = ( '' !== $next ) ? (string) Db::get_ai_provider( $next )['name'] : '无';
+			Admin::redirect_public( 'ai-providers', '已取消默认供应商，当前默认：' . $new_name . '。' );
+		}
+		Db::set_default_ai_provider( $id );
+		Auth::log_admin_action( 'wp.ai.provider.default', '设为默认：' . $prov['name'] );
+		Admin::redirect_public( 'ai-providers', '已把「' . $prov['name'] . '」设为默认供应商。' );
 	}
 
 	/** 删除供应商（删除默认后自动改选）。 */
@@ -248,6 +249,9 @@ class AiAdmin {
 
 		Db::delete_ai_provider( $id );
 		$new_default = Db::reselect_default_ai_provider();
+		// 同步后台设置里的「默认供应商」：否则设置里仍指向已删除的 id，
+		// AI 调用会被判定成「未配置」（表现为删除默认供应商后 AI 直接不可用）。
+		Settings::update( array( 'aiProviderId' => $new_default ) );
 		Auth::log_admin_action( 'wp.ai.provider.delete', $prov['name'] . '（' . $id . '）' );
 		Admin::redirect_public(
 			'ai-providers',

@@ -178,6 +178,12 @@ $T->ok( 200 === $login_keep['status'], '重新启用后保活用户仍能登录'
 
 $T->section( '公开接口（三种地址形式）' );
 
+// 版本号从插件主文件读，不要硬编码（否则每次升版本测试都会误报）
+$plugin_version = '1.0.0';
+$plugin_src     = (string) @file_get_contents( __DIR__ . '/../couple-space.php' );
+if ( preg_match( "/define\(\s*'COUPLE_SPACE_VERSION',\s*'([^']+)'/", $plugin_src, $pv ) ) {
+	$plugin_version = $pv[1];
+}
 $forms = array(
 	'伪静态 /api/...'               => array( '/api/health', '/api/meta', '/api/status' ),
 	'REST /wp-json/couple/v1/api/...' => array(
@@ -196,7 +202,7 @@ foreach ( $forms as $label => $paths ) {
 	$health = $T->req( 'GET', $paths[0] );
 	$T->ok(
 		200 === $health['status'] && isset( $health['json']['ok'] ) && true === $health['json']['ok']
-			&& 'couple-server' === $T->get( $health, 'name' ) && '1.0.0' === $T->get( $health, 'version' )
+			&& 'couple-server' === $T->get( $health, 'name' ) && $plugin_version === $T->get( $health, 'version' )
 			&& is_int( $T->get( $health, 'time' ) ),
 		$label . ' → /api/health 字段与 API.md 一致',
 		$T->brief( $health )
@@ -205,7 +211,7 @@ foreach ( $forms as $label => $paths ) {
 	$meta = $T->req( 'GET', $paths[1] );
 	$meta_ok = 200 === $meta['status']
 		&& '情侣空间' === $T->get( $meta, 'appName' )
-		&& '1.0.0' === $T->get( $meta, 'serverVersion' )
+		&& $plugin_version === $T->get( $meta, 'serverVersion' )
 		&& is_int( $T->get( $meta, 'minAppBuild' ) )
 		&& is_int( $T->get( $meta, 'latestAppBuild' ) )
 		&& is_string( $T->get( $meta, 'updateURL' ) )

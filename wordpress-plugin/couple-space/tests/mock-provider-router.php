@@ -32,9 +32,32 @@ $path = parse_url( isset( $_SERVER['REQUEST_URI'] ) ? $_SERVER['REQUEST_URI'] : 
 $path = is_string( $path ) ? $path : '/';
 $mock = isset( $_GET['mock'] ) ? (string) $_GET['mock'] : '';
 
+// 也支持路径形式的 mock 开关（例如 baseUrl=http://127.0.0.1:8899/mock401）：
+// 这样能顺带验证「Base URL 带查询串时路径拼接是否正确」由产品代码决定，而不是被测试迁就。
+if ( '' === $mock && preg_match( '#/mock(401|slow|empty)(?:/|$)#', $path, $m ) ) {
+	$mock = $m[1];
+}
+
 $raw = file_get_contents( 'php://input' );
 if ( false === $raw ) {
 	$raw = '';
+}
+
+// 探活端点：**不写请求记录**，否则「最后一次请求」会被探活本身污染。
+if ( '/__log' === $path ) {
+	header( 'Content-Type: application/json; charset=utf-8' );
+	$lines = is_file( $log_file ) ? file( $log_file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES ) : array();
+	// 同时回传**本进程实际使用的记录文件路径**：测试脚本据此读取请求记录，
+	// 即使 mock 是被别人手工起起来的（没带 MOCK_LOG），也不会读错文件。
+	echo json_encode(
+		array(
+			'ok'      => true,
+			'count'   => is_array( $lines ) ? count( $lines ) : 0,
+			'logFile' => str_replace( '\\', '/', (string) $log_file ),
+			'pid'     => function_exists( 'getmypid' ) ? (int) getmypid() : 0,
+		)
+	);
+	return;
 }
 
 // 记录请求（便于断言「上游收到了哪些 messages」）。
@@ -62,13 +85,6 @@ $entry = array(
 );
 // 先落盘再 sleep：超时用例里请求也要能被断言到。
 file_put_contents( $log_file, json_encode( $entry, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES ) . "\n", FILE_APPEND | LOCK_EX );
-
-if ( '/__log' === $path ) {
-	header( 'Content-Type: application/json; charset=utf-8' );
-	$lines = is_file( $log_file ) ? file( $log_file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES ) : array();
-	echo json_encode( array( 'ok' => true, 'count' => is_array( $lines ) ? count( $lines ) : 0 ) );
-	return;
-}
 
 /**
  * 输出 JSON。

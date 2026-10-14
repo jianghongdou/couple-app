@@ -68,6 +68,7 @@ class MetaRoutes extends Base {
 
 				return self::ok(
 					array(
+						'ok'              => true,
 						'appName'         => COUPLE_SPACE_DISPLAY_NAME,
 						'serverVersion'   => COUPLE_SPACE_VERSION,
 						'minAppBuild'     => is_int( $s['minAppBuild'] ) ? $s['minAppBuild'] : 1,

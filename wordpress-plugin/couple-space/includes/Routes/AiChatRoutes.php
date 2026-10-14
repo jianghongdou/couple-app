@@ -51,7 +51,43 @@ class AiChatRoutes extends Base {
 			'/api/ai/partners',
 			static function () {
 				$me = Auth::require_user();
-				return self::ok( array( 'partners' => Db::list_ai_partners( $me['user']['id'] ) ) );
+				return self::ok(
+					array(
+						'ok'       => true,
+						'partners' => Db::list_ai_partners( $me['user']['id'] ),
+					)
+				);
+			}
+		);
+
+		// ---------------------------------------------------------------
+		// AI-1b 列出可用供应商（App 只读；绝不返回 apiKey / baseUrl）。
+		// ---------------------------------------------------------------
+		$r->get(
+			'/api/ai/providers',
+			static function () {
+				// 需登录；不要求绑定情侣。
+				Auth::require_user();
+
+				$out = array();
+				foreach ( Db::list_ai_providers( true ) as $p ) {
+					$out[] = array(
+						'id'           => (string) $p['id'],
+						'name'         => (string) $p['name'],
+						// models 为空数组表示「不限制模型名，允许手填」。
+						'models'       => array_values( $p['models'] ),
+						'defaultModel' => (string) $p['defaultModel'],
+						'isDefault'    => (bool) $p['isDefault'],
+					);
+				}
+
+				return self::ok(
+					array(
+						'ok'            => true,
+						'aiChatEnabled' => (bool) Settings::is_ai_chat_enabled(),
+						'providers'     => $out,
+					)
+				);
 			}
 		);
 
@@ -86,7 +122,12 @@ class AiChatRoutes extends Base {
 						'partnerId' => $partner ? $partner['id'] : '',
 					)
 				);
-				return self::ok( array( 'partner' => $partner ) );
+				return self::ok(
+					array(
+						'ok'      => true,
+						'partner' => $partner,
+					)
+				);
 			}
 		);
 
@@ -108,7 +149,12 @@ class AiChatRoutes extends Base {
 
 				$partner = Db::update_ai_partner( $id, $fields );
 				Log::info( '修改 AI 伙伴', array( 'userId' => $me['user']['id'], 'partnerId' => $id ) );
-				return self::ok( array( 'partner' => $partner ) );
+				return self::ok(
+					array(
+						'ok'       => true,
+						'partner'  => $partner,
+					)
+				);
 			}
 		);
 
@@ -165,6 +211,7 @@ class AiChatRoutes extends Base {
 
 				return self::ok(
 					array(
+						'ok'       => true,
 						'partner'  => array(
 							'id'          => $partner['id'],
 							'name'        => $partner['name'],
@@ -253,27 +300,38 @@ class AiChatRoutes extends Base {
 
 				// 1) 先把用户消息落库（唯一索引保证 clientId 幂等）。
 				$message = null;
-				try {
-					$message = Db::insert_ai_message(
-						array(
-							'partnerId' => $partner_id,
-							'ownerId'   => $me['user']['id'],
-							'sender'    => 'user',
-							'body'      => $text,
-							'clientId'  => $client_id,
-						)
-					);
-				} catch ( \Throwable $e ) {
-					if ( Db::is_conflict_error( $e->getMessage() ) && '' !== $client_id ) {
-						// 并发下同一 clientId 同时插入：返回已存在的那条（仍然幂等）。
-						$cached = self::cached_result( $me['user']['id'], $partner_id, $client_id );
-						if ( null !== $cached ) {
-							return self::ok( $cached );
-						}
-						$message = Db::find_ai_message_by_client_id( $me['user']['id'], $client_id );
+				if ( '' !== $client_id && Db::ai_message_client_id_exists( $me['user']['id'], $client_id ) ) {
+					// 并发重放：已经存在同 clientId 的用户消息。
+					$cached = self::cached_result( $me['user']['id'], $partner_id, $client_id );
+					if ( null !== $cached ) {
+						return self::ok( $cached );
 					}
-					if ( null === $message ) {
-						throw $e;
+					$message = Db::find_ai_message_by_client_id( $me['user']['id'], $client_id );
+				}
+
+				if ( null === $message ) {
+					try {
+						$message = Db::insert_ai_message(
+							array(
+								'partnerId' => $partner_id,
+								'ownerId'   => $me['user']['id'],
+								'sender'    => 'user',
+								'body'      => $text,
+								'clientId'  => $client_id,
+							)
+						);
+					} catch ( \Throwable $e ) {
+						if ( Db::is_conflict_error( $e->getMessage() ) && '' !== $client_id ) {
+							// 极窄窗口下的并发插入：返回已存在的那条（仍然幂等）。
+							$cached = self::cached_result( $me['user']['id'], $partner_id, $client_id );
+							if ( null !== $cached ) {
+								return self::ok( $cached );
+							}
+							$message = Db::find_ai_message_by_client_id( $me['user']['id'], $client_id );
+						}
+						if ( null === $message ) {
+							throw $e;
+						}
 					}
 				}
 
@@ -320,7 +378,16 @@ class AiChatRoutes extends Base {
 					);
 				}
 
-				// 3) AI 回复落库（空内容也落一条占位文案，接口仍返回 200）。
+				/*
+				 * 3) AI 回复落库（空内容也落一条占位文案，接口仍返回 200）。
+				 *
+				 * client_id 上的 UNIQUE(owner_id, client_id) 只用来约束**用户消息**的幂等，
+				 * 而 MySQL 的唯一索引把多个 NULL 视为互不相同、却把多个 '' 视为相同：
+				 * 若两条 AI 回复都写 ''，同一会话的第二条回复就会撞唯一键，
+				 * 导致回复落库失败、接口返回 reply=null（用户消息却已经写进去了）。
+				 * 因此这里不传 clientId，由 Db::insert_ai_message 落一个**互不相同的内部关联键**；
+				 * 带 clientId 的请求用 `c:<clientId>` 关联，供幂等重放查找（见 cached_result）。
+				 */
 				$reply_text = (string) $res['content'];
 				if ( '' === trim( $reply_text ) ) {
 					$reply_text = '（AI 没有返回内容）';
@@ -338,6 +405,18 @@ class AiChatRoutes extends Base {
 						'clientId'  => ( '' !== $client_id ) ? ( 'c:' . $client_id ) : '',
 					)
 				);
+				if ( ! is_array( $reply ) || '' === (string) $reply['id'] ) {
+					// 回复写库失败绝不能被当成「成功」蒙混过去（否则会话会丢一条 AI 回复）。
+					Log::error(
+						'AI 回复落库失败',
+						array(
+							'userId'    => $me['user']['id'],
+							'partnerId' => $partner_id,
+							'dbError'   => Db::last_error(),
+						)
+					);
+					throw new HttpException( 500, 'server_error', 'AI 回复保存失败，请重试' );
+				}
 
 				$usage_model = ( isset( $res['model'] ) && '' !== $res['model'] ) ? (string) $res['model'] : $model;
 				Db::record_ai_usage(
@@ -361,6 +440,7 @@ class AiChatRoutes extends Base {
 
 				return self::ok(
 					array(
+						'ok'      => true,
 						'message' => $message,
 						'reply'   => $reply,
 						'usage'   => array(
@@ -584,6 +664,7 @@ class AiChatRoutes extends Base {
 			return null;
 		}
 		return array(
+			'ok'      => true,
 			'message' => $message,
 			'reply'   => $reply,
 			'usage'   => array(
