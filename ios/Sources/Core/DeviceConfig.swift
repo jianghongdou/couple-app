@@ -43,7 +43,11 @@ final class DeviceConfig: ObservableObject {
     }
 
     private init() {
-        self.serverURL = defaults.string(forKey: "serverURL") ?? AppInfo.defaultServerURL
+        // 没填过、或填过但被清空 → 都用打包时预置的默认地址（登录页会直接填好）
+        let savedServer = defaults.string(forKey: "serverURL") ?? ""
+        self.serverURL = savedServer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? AppInfo.defaultServerURL
+            : savedServer
         self.userId = defaults.string(forKey: "userId") ?? ""
         self.username = defaults.string(forKey: "username") ?? ""
         self.nickname = defaults.string(forKey: "nickname") ?? ""

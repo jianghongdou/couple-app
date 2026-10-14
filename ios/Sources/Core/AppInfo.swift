@@ -30,8 +30,9 @@ enum AppInfo {
         #endif
     }
 
-    /// 默认服务器地址（首次启动的占位值，用户可在设置里修改）
-    static let defaultServerURL = "http://192.168.1.100:8787"
+    /// 默认服务器地址（已在打包时预置，登录页会直接填好，用户可改）
+    /// 换服务器时只改这一行，重新打包即可。
+    static let defaultServerURL = "http://nb.wwoyun.cn"
 
     /// 本地数据目录
     static var dataDirectory: URL {
